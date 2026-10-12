@@ -1,0 +1,30 @@
+# Git metadata and local configuration
+.git/
+.env
+.env.*
+
+# Local Python and Node artifacts
+.venv/
+venv/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.py[cod]
+**/node_modules/
+frontend/dist/
+
+# Local runtime data and databases
+/data/
+/backend/data/
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*-journal
+**/*-wal
+**/*-shm
+
+# Tool caches and build output
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+graphify-out/

@@ -1,0 +1,65 @@
+services:
+  aninyom-db:
+    image: postgres:16-alpine
+    container_name: aninyom-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aninyom}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aninyom_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-aninyom}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - aninyom_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aninyom} -d ${POSTGRES_DB:-aninyom}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  aninyom-redis:
+    image: redis:7-alpine
+    container_name: aninyom-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - aninyom_redisdata:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  aninyom-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aninyom-app
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-aninyom}:${POSTGRES_PASSWORD:-aninyom_secret}@aninyom-db:5432/${POSTGRES_DB:-aninyom}
+      REDIS_URL: redis://aninyom-redis:6379/0
+      PORT: 8000
+      HOST: 0.0.0.0
+      DATA_DIR: /app/data
+      CACHE_DIR: /app/data/cache
+      SUBTITLE_DIR: /app/data/subtitles
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - aninyom_data:/app/data
+    depends_on:
+      aninyom-db:
+        condition: service_healthy
+      aninyom-redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  aninyom_pgdata:
+    name: aninyom_pgdata
+  aninyom_redisdata:
+    name: aninyom_redisdata
+  aninyom_data:
+    name: aninyom_data
