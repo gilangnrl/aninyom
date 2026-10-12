@@ -1,6 +1,12 @@
 import { AnimeItem, Episode, StreamData, WatchHistoryItem, BookmarkItem, LexiconItem, RecentReleaseItem } from "./types";
 
-const API_BASE = "/api";
+const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+const API_BASE = `${API_ORIGIN}/api`;
+
+export function toApiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_ORIGIN}${path.startsWith("/") ? path : `/${path}`}`;
+}
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${endpoint}`, {

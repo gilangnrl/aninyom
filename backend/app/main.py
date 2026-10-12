@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import anime, player, subtitles, user
 from .cache import cache
-from .config import HOST, PORT
+from .config import CORS_ORIGINS, HOST, PORT
 from .database import db
 from .proxy import stream
 
@@ -44,8 +44,8 @@ app = FastAPI(
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -59,12 +59,24 @@ app.include_router(user.router)
 
 
 @app.get("/health")
+@app.get("/api/health")
 async def health_check():
     return {
         "status": "healthy",
         "service": "aninyom",
         "postgres_connected": db.is_postgres,
         "redis_connected": cache.is_redis_connected,
+    }
+
+
+@app.get("/api")
+@app.get("/api/")
+async def api_root():
+    return {
+        "service": "aninyom-api",
+        "status": "healthy",
+        "docs": "/docs",
+        "health": "/api/health",
     }
 
 

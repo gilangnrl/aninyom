@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { AnimeItem, Episode, StreamData, SubtitleTrack, WatchHistoryItem } from "../types";
 import { TranslationSchema } from "../i18n";
-import { api } from "../api";
+import { api, toApiUrl } from "../api";
 
 interface MediaPlayerProps {
   anime: AnimeItem;
@@ -220,7 +220,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
       });
       hlsRef.current = hls;
 
-      hls.loadSource(streamData.proxied_url);
+      hls.loadSource(toApiUrl(streamData.proxied_url));
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
@@ -264,7 +264,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
         }
       });
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = streamData.proxied_url;
+      video.src = toApiUrl(streamData.proxied_url);
       video.play().catch(() => setPlaying(false));
     }
 
@@ -292,7 +292,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
       return () => controller.abort();
     }
 
-    fetch(track.url, { signal: controller.signal })
+    fetch(toApiUrl(track.url), { signal: controller.signal })
       .then((res) => {
         if (!res.ok) throw new Error(`Subtitle request failed (${res.status})`);
         return res.text();

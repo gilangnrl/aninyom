@@ -24,6 +24,9 @@ HOST = os.getenv("HOST", "0.0.0.0")
 HI_ANIME_BASE = os.getenv("HI_ANIME_BASE", "https://hianime.at")
 ANILIST_GRAPHQL_URL = os.getenv("ANILIST_GRAPHQL_URL", "https://graphql.anilist.co")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CORS_ORIGINS = [
+    origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()
+]
 
 # HiAnime Megaplay AES Key and IV
 MEGA_KEY = b"i?LMTAx0Q6,:}50U" + b"\x00" * 16

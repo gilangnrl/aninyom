@@ -25,7 +25,32 @@ Compose uses development defaults when no local overrides are supplied. To overr
 docker compose --env-file compose.env.example up --build
 ```
 
-Do not expose the default Compose credentials to a public network. Replace them with private values before any non-local deployment. Runtime databases and cache data are kept in Docker volumes. `docker compose down -v` also deletes those volumes and their data.
+Compose defaults are for development only; do not expose the default credentials or database/cache ports to a public network. Runtime databases and cache data are kept in Docker volumes. `docker compose down -v` also deletes those volumes and their data.
+
+## Deploying to Vercel (Multi-Service)
+
+This repository includes a `vercel.json` configured for Vercel's multi-service deployment:
+- `frontend`: Vite React SPA (service root: `frontend`)
+- `backend`: FastAPI Python API (service root: `backend`)
+
+Top-level routing directs:
+- `/api/(.*)` to the `backend` service
+- `/(.*)` to the `frontend` service
+
+Because both services share the same domain and origin on Vercel, the frontend communicates with the backend via relative `/api/...` endpoints without requiring cross-origin CORS or a `VITE_API_BASE_URL` override.
+
+### Environment variables in Vercel
+Configure these in Project Settings → Environment Variables:
+- `DATABASE_URL`: Connection string to a persistent PostgreSQL database (e.g. Supabase, Neon, or Vercel Postgres). Local SQLite is ephemeral and not persistent in serverless environments.
+- `REDIS_URL` *(optional)*: Connection string to a Redis cache (e.g. Upstash).
+- `GEMINI_API_KEY` *(optional)*: AI fansub subtitle translation provider key.
+- `CORS_ORIGINS` *(optional)*: Defaults to `*`. Can be restricted to your custom domain(s).
+
+### Standalone frontend deployment (alternative)
+If deploying only the frontend to Vercel while running the backend on a dedicated VPS/container (recommended if proxying long-running video streams without serverless duration timeouts):
+1. Set the Vercel root directory to `frontend`.
+2. Set `VITE_API_BASE_URL` to the public origin of your separate backend host (e.g. `https://api.example.com`).
+3. Set `CORS_ORIGINS` on the backend host to include the Vercel deployment domain.
 
 ## Local development
 

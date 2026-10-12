@@ -1,6 +1,7 @@
 # Local environment and secrets. Keep environment files out of Git by default.
 .env
 .env.*
+!frontend/.env.production.example
 
 # Python environments, bytecode, and test/tool caches
 .venv/
