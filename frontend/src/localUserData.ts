@@ -266,6 +266,13 @@ export const localUserData = {
     };
   },
 
+  // Removes this device's copy. Used on sign-out so the next user starts clean.
+  clearAll(): void {
+    localStorage.removeItem(KEYS.bookmarks);
+    localStorage.removeItem(KEYS.history);
+    localStorage.removeItem(KEYS.settings);
+  },
+
   // Union of local and remote data. For each record, the newer timestamp wins.
   mergeState(remote: UserDataState): void {
     const bookmarks = mergeByKey(

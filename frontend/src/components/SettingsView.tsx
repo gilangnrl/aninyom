@@ -3,6 +3,7 @@ import { Sliders, BookOpen, Plus, Check, Cloud, Copy, LogOut, Trash2 } from "luc
 import { LexiconItem } from "../types";
 import { TranslationSchema } from "../i18n";
 import { api } from "../api";
+import { localUserData } from "../localUserData";
 import {
   getSyncCode,
   createSyncCode,
@@ -98,10 +99,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     );
   }, [account]);
 
+  // Clears this device's copy after the session is gone; the server copy comes back on sign-in.
   const handleSignOutGoogle = () =>
     runSyncAction(async () => {
       await signOutGoogle();
-      setAccount(null);
+      localUserData.clearAll();
+      window.location.reload();
     }, "Could not sign out.");
 
   const handleDeleteGoogleAccount = () => {
