@@ -2299,3 +2299,9 @@ textarea::placeholder {
     transition: none;
   }
 }
+
+.google-signin-btn,
+.google-signin-btn iframe {
+  background: transparent !important;
+  color-scheme: normal;
+}

@@ -314,7 +314,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <p className="text-[11px] text-[#c3c6d3]">
               Syncs your list to your account on every device. No code needed.
             </p>
-            <div ref={googleButtonRef} />
+            <div ref={googleButtonRef} className="google-signin-btn" />
             {googleError && <p className="text-[11px] text-[#c3c6d3]">{googleError}</p>}
           </div>
         )}
