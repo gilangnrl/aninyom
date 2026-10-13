@@ -105,6 +105,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       await signOutGoogle();
       disconnectSync();
       localUserData.clearAll();
+      sessionStorage.removeItem("aninyom_active_player");
       window.location.reload();
     }, "Could not sign out.");
 
