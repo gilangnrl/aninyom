@@ -146,9 +146,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab("watchlist")}
+            onClick={() => setActiveTab("settings")}
             className="header-tool-button"
-            aria-label="Open watchlist"
+            aria-label="Account and sync"
+            title="Account and sync"
           >
             <UserRound className="h-4 w-4" />
           </button>

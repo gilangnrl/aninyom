@@ -1,4 +1,5 @@
 import { AnimeItem, Episode, StreamData, WatchHistoryItem, BookmarkItem, LexiconItem, RecentReleaseItem } from "./types";
+import { localUserData, UserDataState } from "./localUserData";
 
 const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 const API_BASE = `${API_ORIGIN}/api`;
@@ -10,11 +11,11 @@ export function toApiUrl(path: string): string {
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${endpoint}`, {
+    ...options,
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {}),
     },
-    ...options,
   });
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
@@ -108,10 +109,9 @@ export const api = {
     request<StreamData>(`/player/stream/${episodeId}?mode=${mode}`),
 
   // Watch History & Resume
-  getHistory: (): Promise<WatchHistoryItem[]> =>
-    request<WatchHistoryItem[]>("/user/history"),
+  getHistory: async (): Promise<WatchHistoryItem[]> => localUserData.getHistory(),
 
-  saveHistory: (data: {
+  saveHistory: async (data: {
     anime_id: number;
     episode_number: number;
     progress_seconds: number;
@@ -120,17 +120,10 @@ export const api = {
     title_romaji?: string;
     title_english?: string;
     cover_image?: string;
-  }) => request("/user/history", {
-    method: "POST",
-    body: JSON.stringify(data),
-  }),
+  }) => localUserData.saveHistory(data),
 
   // Bookmarks
-  getBookmarks: (status?: string): Promise<BookmarkItem[]> => {
-    let url = "/user/bookmarks";
-    if (status) url += `?status=${encodeURIComponent(status)}`;
-    return request<BookmarkItem[]>(url);
-  },
+  getBookmarks: async (status?: string): Promise<BookmarkItem[]> => localUserData.getBookmarks(status),
 
   setBookmark: (data: {
     anime_id: number;
@@ -139,25 +132,43 @@ export const api = {
     title_english?: string;
     cover_image?: string;
     score?: number;
-  }) => request("/user/bookmarks", {
-    method: "POST",
-    body: JSON.stringify(data),
-  }),
+  }) => localUserData.setBookmark(data),
 
-  removeBookmark: (animeId: number) =>
-    request(`/user/bookmarks/${animeId}`, {
-      method: "DELETE",
-    }),
+  removeBookmark: async (animeId: number) => localUserData.removeBookmark(animeId),
 
   // Settings
-  getSettings: (): Promise<Record<string, string>> =>
-    request<Record<string, string>>("/user/settings"),
+  getSettings: async (): Promise<Record<string, string>> => localUserData.getSettings(),
 
-  saveSetting: (key: string, value: string) =>
-    request("/user/settings", {
-      method: "POST",
-      body: JSON.stringify({ key, value }),
+  saveSetting: async (key: string, value: string) => localUserData.saveSetting(key, value),
+
+  // Sync across devices (anonymous sync code)
+  syncCreate: () => request<{ code: string }>("/sync/create", { method: "POST" }),
+
+  syncPush: (code: string | null, state: UserDataState) =>
+    request<UserDataState>("/sync/state", {
+      method: "PUT",
+      headers: code ? { "X-Sync-Code": code } : {},
+      body: JSON.stringify(state),
     }),
+
+  syncDelete: (code: string) =>
+    request<{ status: string }>("/sync/account", {
+      method: "DELETE",
+      headers: { "X-Sync-Code": code },
+    }),
+
+  // Google sign-in (session cookie, same origin)
+  authConfig: () => request<{ google_client_id: string | null }>("/auth/config"),
+
+  authGoogle: (credential: string) =>
+    request<{ name: string | null; email: string | null; picture: string | null }>("/auth/google", {
+      method: "POST",
+      body: JSON.stringify({ credential }),
+    }),
+
+  authLogout: () => request<{ status: string }>("/auth/logout", { method: "POST" }),
+
+  authDeleteAccount: () => request<{ status: string }>("/auth/account", { method: "DELETE" }),
 
   // Lexicon
   getLexicon: (): Promise<LexiconItem[]> =>

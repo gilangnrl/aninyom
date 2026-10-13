@@ -24,6 +24,7 @@ HOST = os.getenv("HOST", "0.0.0.0")
 HI_ANIME_BASE = os.getenv("HI_ANIME_BASE", "https://hianime.at")
 ANILIST_GRAPHQL_URL = os.getenv("ANILIST_GRAPHQL_URL", "https://graphql.anilist.co")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 CORS_ORIGINS = [
     origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()
 ]

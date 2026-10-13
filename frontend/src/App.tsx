@@ -16,6 +16,7 @@ import { WatchlistView } from "./components/WatchlistView";
 import { SettingsView } from "./components/SettingsView";
 import { FooterInfoDialog, FooterInfoPage } from "./components/FooterInfoDialog";
 import { api } from "./api";
+import { startSyncListener, syncNow } from "./syncClient";
 import { translations, TranslationSchema } from "./i18n";
 import { AnimeItem, Episode, WatchHistoryItem, RecentReleaseItem } from "./types";
 
@@ -72,6 +73,12 @@ export const App: React.FC = () => {
     return saved === "id" ? "id" : "en";
   });
   const t: TranslationSchema = translations[lang];
+
+  useEffect(() => {
+    const stop = startSyncListener();
+    void syncNow();
+    return stop;
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("aninyom_lang", lang);

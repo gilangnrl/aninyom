@@ -2,6 +2,8 @@
 Bilingual Self-Hosted Anime Streaming Platform.
 """
 
+import asyncio
+import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -12,7 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import anime, player, subtitles, user
+from . import maintenance
+from .api import anime, auth, player, subtitles, sync, user
 from .cache import cache
 from .config import CORS_ORIGINS, HOST, PORT
 from .database import db
@@ -28,7 +31,11 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Aninyom database and cache connections...")
     await db.connect()
     await cache.connect()
+    maintenance_task = asyncio.create_task(maintenance.run_forever())
     yield
+    maintenance_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await maintenance_task
     logger.info("Closing Aninyom database and cache connections...")
     await cache.close()
     await db.close()
@@ -52,9 +59,11 @@ app.add_middleware(
 
 # Register Routers
 app.include_router(anime.router)
+app.include_router(auth.router)
 app.include_router(player.router)
 app.include_router(stream.router)
 app.include_router(subtitles.router)
+app.include_router(sync.router)
 app.include_router(user.router)
 
 

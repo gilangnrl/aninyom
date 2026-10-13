@@ -104,6 +104,65 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS sync_accounts (
+    code_hash TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_bookmarks (
+    code_hash TEXT NOT NULL,
+    anilist_id INTEGER NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    title_romaji TEXT,
+    title_english TEXT,
+    cover_image_large TEXT,
+    average_score INTEGER,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (code_hash, anilist_id)
+);
+
+CREATE TABLE IF NOT EXISTS sync_history (
+    code_hash TEXT NOT NULL,
+    anilist_id INTEGER NOT NULL,
+    episode_number INTEGER NOT NULL,
+    title_romaji TEXT,
+    title_english TEXT,
+    cover_image TEXT,
+    progress_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+    total_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+    completed BOOLEAN NOT NULL DEFAULT FALSE,
+    last_watched_at TEXT NOT NULL,
+    PRIMARY KEY (code_hash, anilist_id, episode_number)
+);
+
+CREATE TABLE IF NOT EXISTS sync_settings (
+    code_hash TEXT NOT NULL,
+    key VARCHAR(64) NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (code_hash, key)
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    code_hash TEXT NOT NULL UNIQUE,
+    email TEXT,
+    name TEXT,
+    picture TEXT,
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_accounts_seen ON sync_accounts(last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_anime_anilist_id ON anime(anilist_id);
 CREATE INDEX IF NOT EXISTS idx_anime_hianime_id ON anime(hianime_id);
 CREATE INDEX IF NOT EXISTS idx_watch_history_last_watched ON watch_history(last_watched_at DESC);
@@ -212,6 +271,65 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS sync_accounts (
+    code_hash TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_bookmarks (
+    code_hash TEXT NOT NULL,
+    anilist_id INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    title_romaji TEXT,
+    title_english TEXT,
+    cover_image_large TEXT,
+    average_score INTEGER,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (code_hash, anilist_id)
+);
+
+CREATE TABLE IF NOT EXISTS sync_history (
+    code_hash TEXT NOT NULL,
+    anilist_id INTEGER NOT NULL,
+    episode_number INTEGER NOT NULL,
+    title_romaji TEXT,
+    title_english TEXT,
+    cover_image TEXT,
+    progress_seconds REAL NOT NULL DEFAULT 0,
+    total_seconds REAL NOT NULL DEFAULT 0,
+    completed BOOLEAN NOT NULL DEFAULT 0,
+    last_watched_at TEXT NOT NULL,
+    PRIMARY KEY (code_hash, anilist_id, episode_number)
+);
+
+CREATE TABLE IF NOT EXISTS sync_settings (
+    code_hash TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (code_hash, key)
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    code_hash TEXT NOT NULL UNIQUE,
+    email TEXT,
+    name TEXT,
+    picture TEXT,
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_accounts_seen ON sync_accounts(last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_watch_history_last_watched ON watch_history(last_watched_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_status ON bookmarks(status);
 CREATE INDEX IF NOT EXISTS idx_episodes_anime_ep ON episodes(anime_id, episode_number);
@@ -338,6 +456,18 @@ class DatabaseManager:
             converted_args = [json.dumps(a) if isinstance(a, (dict, list)) else a for a in args]
             async with aiosqlite.connect(self._sqlite_path) as conn:
                 await conn.execute(query, converted_args)
+                await conn.commit()
+
+    async def execute_many(self, query: str, rows: List[tuple]) -> None:
+        if not rows:
+            return
+        if self.is_postgres and self.pg_pool:
+            pg_query = self._convert_params_to_pg(query)
+            async with self.pg_pool.acquire() as conn:
+                await conn.executemany(pg_query, rows)
+        else:
+            async with aiosqlite.connect(self._sqlite_path) as conn:
+                await conn.executemany(query, rows)
                 await conn.commit()
 
     async def fetch(self, query: str, *args) -> List[Dict[str, Any]]:

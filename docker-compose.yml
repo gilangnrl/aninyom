@@ -40,6 +40,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-aninyom}:${POSTGRES_PASSWORD:-aninyom_secret}@aninyom-db:5432/${POSTGRES_DB:-aninyom}
       REDIS_URL: redis://aninyom-redis:6379/0
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       PORT: 8000
       HOST: 0.0.0.0
       DATA_DIR: /app/data

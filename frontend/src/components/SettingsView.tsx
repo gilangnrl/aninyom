@@ -1,8 +1,24 @@
-import React, { useEffect, useState } from "react";
-import { Sliders, BookOpen, Plus, Check } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Sliders, BookOpen, Plus, Check, Cloud, Copy, LogOut, Trash2 } from "lucide-react";
 import { LexiconItem } from "../types";
 import { TranslationSchema } from "../i18n";
 import { api } from "../api";
+import {
+  getSyncCode,
+  createSyncCode,
+  connectSync,
+  disconnectSync,
+  deleteSyncData,
+  syncNow,
+} from "../syncClient";
+import {
+  Account,
+  getAccount,
+  renderGoogleButton,
+  signInWithGoogle,
+  signOutGoogle,
+  deleteGoogleAccount,
+} from "../auth";
 
 interface SettingsViewProps {
   lang: "en" | "id";
@@ -25,6 +41,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [ambientGlow, setAmbientGlow] = useState(true);
   const [autoSkip, setAutoSkip] = useState(false);
 
+  const [syncCode, setSyncCodeState] = useState<string | null>(() => getSyncCode());
+  const [codeInput, setCodeInput] = useState("");
+  const [syncError, setSyncError] = useState("");
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [account, setAccount] = useState<Account | null>(() => getAccount());
+  const [googleError, setGoogleError] = useState("");
+  const googleButtonRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     api.getLexicon().then(setLexicon).catch(console.error);
     api.getSettings().then((s) => {
@@ -43,6 +68,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const nextVal = !autoSkip;
     setAutoSkip(nextVal);
     api.saveSetting("auto_skip_intro", String(nextVal));
+  };
+
+  const runSyncAction = async (action: () => Promise<void>, failMsg: string) => {
+    setSyncBusy(true);
+    setSyncError("");
+    try {
+      await action();
+      setSyncCodeState(getSyncCode());
+    } catch (e) {
+      setSyncError(e instanceof Error && e.message ? e.message : failMsg);
+      setSyncCodeState(getSyncCode());
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (account || !googleButtonRef.current) return;
+    setGoogleError("");
+    renderGoogleButton(googleButtonRef.current, (credential) =>
+      runSyncAction(async () => {
+        const signedIn = await signInWithGoogle(credential);
+        setAccount(signedIn);
+        await syncNow();
+      }, "Could not sign in with Google.")
+    ).catch((e) =>
+      setGoogleError(e instanceof Error ? e.message : "Google sign-in is unavailable.")
+    );
+  }, [account]);
+
+  const handleSignOutGoogle = () =>
+    runSyncAction(async () => {
+      await signOutGoogle();
+      setAccount(null);
+    }, "Could not sign out.");
+
+  const handleDeleteGoogleAccount = () => {
+    if (!window.confirm("Delete your account and the synced copy on the server? Data on this device is kept.")) return;
+    runSyncAction(async () => {
+      await deleteGoogleAccount();
+      setAccount(null);
+    }, "Could not delete your account.");
+  };
+
+  const handleCreateSync = () =>
+    runSyncAction(async () => {
+      await createSyncCode();
+    }, "Could not create a sync code.");
+
+  const handleConnectSync = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!codeInput.trim()) return;
+    runSyncAction(async () => {
+      await connectSync(codeInput);
+      setCodeInput("");
+    }, "Could not connect. Check the code and try again.");
+  };
+
+  const handleDisconnectSync = () => {
+    disconnectSync();
+    setSyncCodeState(null);
+  };
+
+  const handleDeleteSync = () => {
+    if (!window.confirm("Delete the synced copy on the server? Data on this device is kept.")) return;
+    runSyncAction(deleteSyncData, "Could not delete synced data.");
+  };
+
+  const handleCopySync = async () => {
+    if (!syncCode) return;
+    await navigator.clipboard.writeText(syncCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleAddLexicon = (e: React.FormEvent) => {
@@ -163,6 +261,143 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Sync Across Devices Panel */}
+      <div className="rounded-2xl bg-[#1a1f2c] p-6 md:p-8 border border-white/5 space-y-6">
+        <div>
+          <h2 className="text-base md:text-lg font-bold text-[#dee2f3] flex items-center gap-2">
+            <Cloud className="w-5 h-5 text-[#7aa2f7]" />
+            Sync across devices
+          </h2>
+          <p className="text-xs text-[#c3c6d3] mt-1">
+            Your watchlist and history are saved in this browser. Sign in with Google to use them on any device, or create a sync code instead. Anyone with a sync code can read and change its synced data, so keep it private.
+          </p>
+        </div>
+
+        {account ? (
+          <div className="p-4 rounded-xl bg-[#252a37] border border-white/5 space-y-4">
+            <div className="flex items-center gap-3 min-w-0">
+              {account.picture && (
+                <img src={account.picture} alt="" referrerPolicy="no-referrer" className="w-10 h-10 rounded-full" />
+              )}
+              <div className="min-w-0">
+                <span className="text-xs font-bold text-[#dee2f3] block truncate">{account.name || "Signed in"}</span>
+                <span className="text-[11px] text-[#c3c6d3] block truncate">{account.email}</span>
+              </div>
+            </div>
+            <p className="text-[11px] text-[#c3c6d3]">
+              Your list syncs to this account on every device where you sign in with Google.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleSignOutGoogle}
+                disabled={syncBusy}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#1a1f2c] text-xs font-bold text-[#c3c6d3] border border-white/10 hover:text-[#dee2f3] disabled:opacity-50"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Sign out
+              </button>
+              <button
+                onClick={handleDeleteGoogleAccount}
+                disabled={syncBusy}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-red-500/10 text-xs font-bold text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete account
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 rounded-xl bg-[#252a37] border border-white/5 space-y-3">
+            <span className="text-xs font-bold text-[#dee2f3] block">Sign in with Google</span>
+            <p className="text-[11px] text-[#c3c6d3]">
+              Syncs your list to your account on every device. No code needed.
+            </p>
+            <div ref={googleButtonRef} />
+            {googleError && <p className="text-[11px] text-[#c3c6d3]">{googleError}</p>}
+          </div>
+        )}
+
+        {!account && (syncCode ? (
+          <div className="p-4 rounded-xl bg-[#252a37] border border-white/5 space-y-4">
+            <div>
+              <span className="text-[11px] text-[#c3c6d3] block mb-1">Your sync code</span>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-sm font-mono font-bold text-[#f6bc6a] tracking-widest">
+                  {syncCode}
+                </code>
+                <button
+                  onClick={handleCopySync}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1a1f2c] text-xs font-semibold text-[#dee2f3] border border-white/10 hover:border-[#7aa2f7]"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <p className="text-[11px] text-[#c3c6d3] mt-2">
+                Enter this code on another device to load your list. If you lose it, your synced copy cannot be recovered.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleDisconnectSync}
+                disabled={syncBusy}
+                className="px-4 py-2 rounded-full bg-[#1a1f2c] text-xs font-bold text-[#c3c6d3] border border-white/10 hover:text-[#dee2f3] disabled:opacity-50"
+              >
+                Turn off sync on this device
+              </button>
+              <button
+                onClick={handleDeleteSync}
+                disabled={syncBusy}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-red-500/10 text-xs font-bold text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete synced data
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 rounded-xl bg-[#252a37] border border-white/5 space-y-3">
+              <span className="text-xs font-bold text-[#dee2f3] block">New sync code</span>
+              <p className="text-[11px] text-[#c3c6d3]">
+                Creates a code for this device. Your current list is uploaded.
+              </p>
+              <button
+                onClick={handleCreateSync}
+                disabled={syncBusy}
+                className="px-5 py-2 rounded-full bg-[#7aa2f7] text-[#002e6b] text-xs font-bold shadow-md active:scale-95 disabled:opacity-50"
+              >
+                Create code
+              </button>
+            </div>
+            <form onSubmit={handleConnectSync} className="p-4 rounded-xl bg-[#252a37] border border-white/5 space-y-3">
+              <label className="text-xs font-bold text-[#dee2f3] block">I have a code</label>
+              <p className="text-[11px] text-[#c3c6d3]">
+                Connecting merges this device's list with the synced list. The newer change wins.
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={codeInput}
+                  onChange={(e) => setCodeInput(e.target.value)}
+                  placeholder="XXXX-XXXX-XXXX-XXXX"
+                  className="flex-1 bg-[#1a1f2c] text-xs font-mono text-[#dee2f3] rounded-lg px-3 py-2 border border-white/10 focus:outline-none focus:border-[#7aa2f7]"
+                />
+                <button
+                  type="submit"
+                  disabled={syncBusy || !codeInput.trim()}
+                  className="px-4 py-2 rounded-full bg-[#7aa2f7] text-[#002e6b] text-xs font-bold disabled:opacity-50"
+                >
+                  Connect
+                </button>
+              </div>
+            </form>
+          </div>
+        ))}
+
+        {syncError && <p className="text-xs text-red-400 font-semibold">{syncError}</p>}
       </div>
 
       {/* Fansub Lexicon Dictionary Section */}
