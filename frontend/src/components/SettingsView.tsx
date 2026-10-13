@@ -103,6 +103,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleSignOutGoogle = () =>
     runSyncAction(async () => {
       await signOutGoogle();
+      disconnectSync();
       localUserData.clearAll();
       window.location.reload();
     }, "Could not sign out.");
