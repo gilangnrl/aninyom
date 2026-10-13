@@ -2300,8 +2300,17 @@ textarea::placeholder {
   }
 }
 
+.google-signin-btn {
+  width: 260px;
+  max-width: 100%;
+}
+
 .google-signin-btn,
 .google-signin-btn iframe {
   background: transparent !important;
   color-scheme: normal;
+}
+
+.google-signin-btn iframe {
+  width: 100% !important;
 }
