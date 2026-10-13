@@ -70,7 +70,7 @@ export async function renderGoogleButton(
   await loadGoogleScript();
   const id = window.google!.accounts.id;
   id.initialize({ client_id: google_client_id, callback: (r) => onCredential(r.credential) });
-  id.renderButton(parent, { theme: "filled_black", size: "large", shape: "pill", text: "signin_with" });
+  id.renderButton(parent, { theme: "outline", size: "large", shape: "pill", text: "signin_with" });
 }
 
 export async function signInWithGoogle(credential: string): Promise<Account> {
