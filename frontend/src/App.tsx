@@ -594,6 +594,19 @@ export const App: React.FC = () => {
     api.getHistory().then(setRecentHistory).catch(() => {});
   };
 
+  const handleOpenDetailsFromPlayer = useCallback(() => {
+    if (!playingEpisode) return;
+    const anime = playingEpisode.anime;
+    setSelectedAnime(anime);
+    setActiveTab("details");
+    setPlayingEpisode(null);
+    try {
+      sessionStorage.removeItem("aninyom_active_player");
+    } catch {}
+    window.history.replaceState(null, "", `#/anime/${anime.anilist_id}`);
+    api.getHistory().then(setRecentHistory).catch(() => {});
+  }, [playingEpisode]);
+
   // Toggle upcoming season notification
   const toggleUpcomingNotify = (id: number) => {
     setSubscribedUpcoming((prev) => ({
@@ -1287,6 +1300,7 @@ export const App: React.FC = () => {
           episodeId={playingEpisode.episodeId}
           episodesList={playingEpisode.episodesList}
           onClose={handleClosePlayer}
+          onOpenDetails={handleOpenDetailsFromPlayer}
           onSelectEpisode={(epNum, epId) => {
             setPlayingEpisode((prev) => {
               if (!prev) return null;

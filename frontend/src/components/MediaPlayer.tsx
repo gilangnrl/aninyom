@@ -3,7 +3,7 @@ import Hls from "hls.js";
 import {
   Play, Pause, Volume2, VolumeX, Maximize, Minimize,
   SkipForward, SkipBack, RotateCcw, RotateCw, Settings, Captions,
-  X, Check, Sparkles, ChevronRight, ListVideo, CheckCircle2, Clock
+  X, Check, Sparkles, ChevronRight, ListVideo, CheckCircle2, Clock, Info
 } from "lucide-react";
 import { AnimeItem, Episode, StreamData, SubtitleTrack, WatchHistoryItem } from "../types";
 import { TranslationSchema } from "../i18n";
@@ -15,6 +15,7 @@ interface MediaPlayerProps {
   episodeId: string;
   episodesList: Episode[];
   onClose: () => void;
+  onOpenDetails: () => void;
   onSelectEpisode: (epNum: number, epId: string) => void;
   lang: "en" | "id";
   t: TranslationSchema;
@@ -184,6 +185,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
   episodeId,
   episodesList,
   onClose,
+  onOpenDetails,
   onSelectEpisode,
   lang,
   t,
@@ -912,6 +914,16 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenDetails}
+            className="media-player-tool-button"
+            title={t.details}
+            aria-label={t.details}
+          >
+            <Info className="w-4 h-4" />
+          </button>
+
           <button
             onClick={() => setAmbientGlow(!ambientGlow)}
             title={t.playerAmbientGlow}
