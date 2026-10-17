@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { Navbar } from "./components/Navbar";
 import { BrandMark } from "./components/BrandMark";
+import { BrandWordmark } from "./components/BrandWordmark";
 import { HeroBanner } from "./components/HeroBanner";
 import { AnimeCard } from "./components/AnimeCard";
 import { AnimeDetailsView } from "./components/AnimeDetailsView";
@@ -1256,7 +1257,7 @@ export const App: React.FC = () => {
           <div className="site-footer-brand-row">
             <div className="site-footer-brand">
               <BrandMark className="footer-brand-mark" />
-              <span>Aninyom</span>
+              <BrandWordmark />
             </div>
             <p className="site-footer-note">Release times and availability can vary by title and source.</p>
           </div>

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { TranslationSchema } from "../i18n";
 import { BrandMark } from "./BrandMark";
+import { BrandWordmark } from "./BrandWordmark";
 
 interface NavbarProps {
   activeTab: string;
@@ -93,7 +94,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           aria-label="Aninyom home"
         >
           <BrandMark />
-          <span className="brand-name">aninyom</span>
+          <BrandWordmark />
         </button>
 
         <nav className="primary-nav" aria-label="Main navigation">

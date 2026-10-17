@@ -2059,10 +2059,23 @@ textarea::placeholder {
 .site-footer-brand {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   color: var(--tx);
-  font-size: 18px;
-  font-weight: 800;
+}
+
+.site-footer-brand .brand-mark {
+  width: auto;
+  height: 36px;
+}
+
+.site-footer-brand .brand-mark img {
+  width: auto;
+  height: 100%;
+  max-width: 44px;
+}
+
+.site-footer-brand .brand-name {
+  transform: translateY(-2px);
 }
 
 .site-footer-note,
