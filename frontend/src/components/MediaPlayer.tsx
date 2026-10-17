@@ -25,7 +25,36 @@ interface ParsedCue {
   end: number;
   idText?: string;
   enText?: string;
-  rawText: string;
+  text: string;
+}
+
+function readLocal(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeLocal(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Storage can be unavailable (private mode); preference just won't persist.
+  }
+}
+
+/**
+ * Manifest audio renditions are named by the provider ("Japanese", "English",
+ * ...). Spell out which rendition is the dub so the choice is unambiguous.
+ */
+function audioRenditionLabel(track: { name: string; lang: string }, total: number): string {
+  const base = track.name || track.lang || "Audio";
+  if (total < 2) return base;
+  const key = `${track.lang || ""} ${track.name || ""}`.toLowerCase();
+  if (/\ben(g|glish)?\b/.test(key)) return `${base} (Dub)`;
+  if (/\bja(p|panese)?\b/.test(key)) return `${base} (Sub)`;
+  return base;
 }
 
 function decodeHtmlEntities(str: string): string {
@@ -60,14 +89,14 @@ function parseVttCues(vttText: string): ParsedCue[] {
       const fullText = textLines.join("\n");
       const idMatch = fullText.match(/<c\.id>(.*?)<\/c\.id>/s);
       const enMatch = fullText.match(/<c\.en>(.*?)<\/c\.en>/s);
+      const idText = idMatch ? decodeHtmlEntities(idMatch[1].trim()) : undefined;
+      const enText = enMatch ? decodeHtmlEntities(enMatch[1].trim()) : undefined;
+      const plainText = decodeHtmlEntities(fullText.replace(/<[^>]+>/g, "").trim());
 
-      cues.push({
-        start,
-        end,
-        idText: idMatch ? decodeHtmlEntities(idMatch[1].trim()) : undefined,
-        enText: enMatch ? decodeHtmlEntities(enMatch[1].trim()) : undefined,
-        rawText: decodeHtmlEntities(fullText.replace(/<[^>]+>/g, "").trim()),
-      });
+      // A cue with no text in any form carries nothing to display.
+      if (idText || enText || plainText) {
+        cues.push({ start, end, idText, enText, text: plainText });
+      }
     }
     start = -1;
     end = -1;
@@ -147,6 +176,14 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
   const hasSubtitleTrack = (language: string) =>
     subTracks.some((track) => track.lang === language && Boolean(track.url));
 
+  // Audio selection (manifest renditions or provider audio modes)
+  const [streamMode, setStreamMode] = useState<"sub" | "dub">(() =>
+    readLocal("aninyom:audio-mode") === "dub" ? "dub" : "sub"
+  );
+  const [manifestAudio, setManifestAudio] = useState<{ name: string; lang: string }[]>([]);
+  const [selectedAudioTrack, setSelectedAudioTrack] = useState<number>(0);
+  const resumeTimeRef = useRef<number>(0);
+
   // Auto skip state
   const [autoSkipIntro, setAutoSkipIntro] = useState(false);
 
@@ -177,9 +214,27 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
     setActiveCues([]);
     setCurrentActiveCue(null);
 
-    api.getStreamData(episodeId, "sub")
+    api.getStreamData(episodeId, streamMode, {
+      title: anime.title_romaji || anime.title_english,
+      titleAlt: anime.title_english,
+      episode: episodeNumber,
+      anilistId: anime.anilist_id,
+    })
       .then((data) => {
         if (!isMounted) return;
+
+        // The backend falls back to sub when the requested audio mode is not
+        // available; reflect that instead of showing a stale selection.
+        if (
+          streamMode === "dub" &&
+          Array.isArray(data.available_modes) &&
+          data.available_modes.length > 0 &&
+          !data.available_modes.includes("dub")
+        ) {
+          setStreamMode("sub");
+          return;
+        }
+
         setStreamData(data);
         const tracks = data.tracks || [];
         setSubTracks(tracks);
@@ -192,6 +247,9 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
       .catch((err) => {
         if (!isMounted) return;
         setError(err.message || "Failed to load stream");
+        // A failed audio-mode switch should not leave the selector claiming a
+        // mode that is not playing.
+        if (streamMode !== "sub") setStreamMode("sub");
       })
       .finally(() => {
         if (isMounted) setLoading(false);
@@ -200,7 +258,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [episodeId]);
+  }, [episodeId, streamMode, anime.title_romaji, anime.title_english, anime.anilist_id, episodeNumber]);
 
   // 2. Initialize HLS Player
   useEffect(() => {
@@ -231,15 +289,34 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
         }));
         setQualityLevels(levels);
 
-        // Resume playback if history exists
-        api.getHistory().then((history) => {
-          const item = history.find(
-            (h) => h.anilist_id === anime.anilist_id && h.episode_number === episodeNumber
-          );
-          if (item && item.progress_seconds > 10 && item.progress_seconds < item.total_seconds - 30) {
-            video.currentTime = item.progress_seconds;
-          }
-        }).catch(() => {});
+        // Audio renditions declared by EXT-X-MEDIA (provider-agnostic).
+        const audio = (hls.audioTracks || []).map((track) => ({
+          name: track.name || track.lang || "Audio",
+          lang: track.lang || "",
+        }));
+        setManifestAudio(audio);
+        if (audio.length > 1) {
+          const saved = Number(readLocal("aninyom:audio-track") ?? "-1");
+          const index = saved >= 0 && saved < audio.length ? saved : Math.max(hls.audioTrack, 0);
+          hls.audioTrack = index;
+          setSelectedAudioTrack(index);
+        }
+
+        // Prefer an explicit resume point from an audio-mode switch.
+        if (resumeTimeRef.current > 0) {
+          video.currentTime = resumeTimeRef.current;
+          resumeTimeRef.current = 0;
+        } else {
+          // Resume playback if history exists
+          api.getHistory().then((history) => {
+            const item = history.find(
+              (h) => h.anilist_id === anime.anilist_id && h.episode_number === episodeNumber
+            );
+            if (item && item.progress_seconds > 10 && item.progress_seconds < item.total_seconds - 30) {
+              video.currentTime = item.progress_seconds;
+            }
+          }).catch(() => {});
+        }
 
         video.play().catch(() => setPlaying(false));
       });
@@ -434,6 +511,31 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
     }
   }, []);
 
+  const selectManifestAudio = useCallback((index: number) => {
+    const hls = hlsRef.current;
+    if (hls && hls.audioTracks && index < hls.audioTracks.length) {
+      hls.audioTrack = index;
+    }
+    setSelectedAudioTrack(index);
+    writeLocal("aninyom:audio-track", String(index));
+    setShowSettingsMenu(false);
+  }, []);
+
+  const selectAudioMode = useCallback(
+    (mode: "sub" | "dub") => {
+      if (mode === streamMode) {
+        setShowSettingsMenu(false);
+        return;
+      }
+      const video = videoRef.current;
+      if (video) resumeTimeRef.current = video.currentTime;
+      setStreamMode(mode);
+      writeLocal("aninyom:audio-mode", mode);
+      setShowSettingsMenu(false);
+    },
+    [streamMode]
+  );
+
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
     const video = videoRef.current;
@@ -554,6 +656,24 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
   const displayTitle =
     lang === "en" && anime.title_english ? anime.title_english : anime.title_romaji;
 
+  const modeAudioTracks = (streamData?.audio_tracks || []).filter(
+    (track) => track.kind === "mode"
+  );
+
+  // Only render text that belongs to the selected track. A dual document that
+  // is missing one half shows nothing rather than falling back to stripped tags.
+  const showDualSubtitle = Boolean(
+    selectedSub === "dual" && currentActiveCue?.idText && currentActiveCue?.enText
+  );
+  const activeSubtitleText =
+    !currentActiveCue || selectedSub === "dual"
+      ? ""
+      : selectedSub === "id"
+      ? currentActiveCue.idText ?? currentActiveCue.text
+      : selectedSub === "en" || selectedSub === "en-ai"
+      ? currentActiveCue.enText ?? currentActiveCue.text
+      : currentActiveCue.text;
+
   return (
     <div
       ref={containerRef}
@@ -581,26 +701,22 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
       />
 
       {/* Custom High-Fidelity Subtitle Overlay */}
-      {currentActiveCue && selectedSub !== "off" && (
+      {selectedSub !== "off" && (showDualSubtitle || activeSubtitleText) && (
         <div className="media-subtitles absolute bottom-20 md:bottom-24 left-6 right-6 z-20 flex flex-col items-center justify-center text-center sub-overlay pointer-events-none">
-          {selectedSub === "dual" && currentActiveCue.idText && currentActiveCue.enText ? (
+          {showDualSubtitle ? (
             // Dual-Subtitle Mode: Top Indonesian in Amber/Gold, Bottom English in Crisp White
             <div className="media-subtitle-box inline-flex flex-col items-center max-w-4xl space-y-1">
               <div className="media-subtitle-id text-base sm:text-lg md:text-2xl font-extrabold leading-snug drop-shadow-md">
-                {currentActiveCue.idText}
+                {currentActiveCue?.idText}
               </div>
               <div className="media-subtitle-en text-xs sm:text-sm md:text-base font-medium leading-snug drop-shadow-sm">
-                {currentActiveCue.enText}
+                {currentActiveCue?.enText}
               </div>
             </div>
           ) : (
             // Single Track Mode
             <div className="media-subtitle-box inline-block max-w-4xl text-sm sm:text-base md:text-xl font-bold text-white">
-              {selectedSub === "id" && currentActiveCue.idText
-                ? currentActiveCue.idText
-                : selectedSub === "en" && currentActiveCue.enText
-                ? currentActiveCue.enText
-                : currentActiveCue.rawText}
+              {activeSubtitleText}
             </div>
           )}
         </div>
@@ -971,15 +1087,54 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
                   setShowSubMenu(false);
                 }}
                 className="media-tool-button"
-                aria-label={t.playerQuality}
-                title={t.playerQuality}
+                aria-label={t.playerSettings}
+                title={t.playerSettings}
                 aria-expanded={showSettingsMenu}
               >
                 <Settings className="w-5 h-5" />
               </button>
 
               {showSettingsMenu && (
-                <div className="media-menu absolute bottom-12 right-0 w-48 glass-dropdown rounded-2xl p-2 shadow-2xl flex flex-col gap-1 z-40" role="group" aria-label={t.playerQuality}>
+                <div className="media-menu absolute bottom-12 right-0 w-48 glass-dropdown rounded-2xl p-2 shadow-2xl flex flex-col gap-1 z-40" role="group" aria-label={t.playerSettings}>
+                  {(manifestAudio.length > 0 || modeAudioTracks.length > 0) && (
+                    <>
+                      <div className="media-menu-heading px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider">
+                        Audio
+                      </div>
+                      {manifestAudio.length > 0
+                        ? manifestAudio.map((track, index) => (
+                            <button
+                              key={`${track.lang}-${index}`}
+                              onClick={() => selectManifestAudio(index)}
+                              className="media-menu-option flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold"
+                              aria-pressed={selectedAudioTrack === index}
+                            >
+                              <span>{audioRenditionLabel(track, manifestAudio.length)}</span>
+                              {selectedAudioTrack === index && (
+                                <Check className="media-menu-check w-4 h-4" />
+                              )}
+                            </button>
+                          ))
+                        : modeAudioTracks.map((track) => (
+                            <button
+                              key={track.mode || track.lang}
+                              onClick={() => {
+                                if (track.mode === "sub" || track.mode === "dub") {
+                                  selectAudioMode(track.mode);
+                                }
+                              }}
+                              className="media-menu-option flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold"
+                              aria-pressed={streamMode === track.mode}
+                            >
+                              <span>{track.label}</span>
+                              {streamMode === track.mode && (
+                                <Check className="media-menu-check w-4 h-4" />
+                              )}
+                            </button>
+                          ))}
+                      <div className="my-1 h-px bg-white/10" />
+                    </>
+                  )}
                   <div className="media-menu-heading px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider">
                     {t.playerQuality}
                   </div>

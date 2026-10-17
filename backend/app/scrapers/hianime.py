@@ -170,6 +170,11 @@ def extract_stream(episode_id: str, mode: str = "sub") -> Dict[str, Any]:
     server_items = soup.select(".server-item")
     servers = []
 
+    # Which audio modes this episode actually exposes (sub / dub).
+    available_modes = sorted(
+        {str(it.get("data-type")) for it in server_items if it.get("data-type")}
+    )
+
     for it in server_items:
         stype = it.get("data-type")
         if stype != mode:
@@ -244,7 +249,11 @@ def extract_stream(episode_id: str, mode: str = "sub") -> Dict[str, Any]:
                         file_url = t.get("file") or t.get("src") or t.get("url") or ""
                         if file_url:
                             lbl = t.get("label") or t.get("lang") or "Unknown"
-                            lng = (t.get("lang") or t.get("language") or lbl).lower()[:2]
+                            lng = (
+                                str(t.get("lang") or t.get("language") or lbl or "")
+                                .strip()
+                                .lower()
+                            )
                             tracks.append(
                                 {
                                     "file": file_url,
@@ -265,6 +274,7 @@ def extract_stream(episode_id: str, mode: str = "sub") -> Dict[str, Any]:
                         "tracks": tracks,
                         "intro": intro,
                         "outro": outro,
+                        "available_modes": available_modes,
                     }
 
             # Strategy 2: Check for data-id (Megaplay)
@@ -304,7 +314,11 @@ def extract_stream(episode_id: str, mode: str = "sub") -> Dict[str, Any]:
                         is_vtt_url = bool(re.search(r"\.vtt(?:$|[?#])", file_url, re.IGNORECASE))
                         if file_url and (is_vtt_url or "caption" in kind or "subtitle" in kind):
                             lbl = t.get("label") or t.get("lang") or "Unknown"
-                            lng = (t.get("lang") or t.get("language") or lbl).lower()[:2]
+                            lng = (
+                                str(t.get("lang") or t.get("language") or lbl or "")
+                                .strip()
+                                .lower()
+                            )
                             tracks.append(
                                 {
                                     "file": file_url,
@@ -321,6 +335,7 @@ def extract_stream(episode_id: str, mode: str = "sub") -> Dict[str, Any]:
                         "tracks": tracks,
                         "intro": cfg.get("intro", {"start": 0, "end": 0}),
                         "outro": cfg.get("outro", {"start": 0, "end": 0}),
+                        "available_modes": available_modes,
                     }
         except Exception as e:
             last_error = e

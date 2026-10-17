@@ -2,7 +2,10 @@
 Serves on-demand translated Indonesian, original English, and Dual-subtitles WebVTT.
 """
 
+import asyncio
+import hashlib
 import logging
+import re
 from typing import Optional
 
 from curl_cffi import requests as creq
@@ -11,6 +14,7 @@ from pydantic import BaseModel
 
 from ..config import HI_UA
 from ..database import db
+from ..subtitle.formats import to_vtt
 from ..subtitle.translator import (
     build_dual_vtt,
     build_vtt,
@@ -27,6 +31,31 @@ HEADERS = {
     "Accept": "*/*",
 }
 
+EMPTY_VTT = "WEBVTT\n\n"
+_TAG_RE = re.compile(r"<[^>]+>")
+
+# Languages whose subtitles are expected to be written in Latin script.
+_LATIN_LANGS = {
+    "en",
+    "id",
+    "es",
+    "fr",
+    "de",
+    "it",
+    "pt",
+    "pl",
+    "tr",
+    "vi",
+    "nl",
+    "sv",
+    "no",
+    "da",
+    "fi",
+    "cs",
+    "ro",
+    "hu",
+}
+
 
 class LexiconEntry(BaseModel):
     source_term: str
@@ -35,8 +64,39 @@ class LexiconEntry(BaseModel):
     notes: Optional[str] = None
 
 
-async def _fetch_vtt(src_url: str, referer: Optional[str] = None) -> str:
-    """Fetch raw WebVTT content with correct Referer header."""
+def _latin_ratio(text: str) -> float:
+    """Share of letters that belong to the Latin script."""
+    letters = [char for char in text if char.isalpha()]
+    if not letters:
+        return 1.0
+    latin = sum(1 for char in letters if ord(char) < 0x0250)
+    return latin / len(letters)
+
+
+def _cache_lang(lang_key: str, src_url: str) -> str:
+    """Cache key that includes the source URL, so provider swaps never collide."""
+    digest = hashlib.sha256(src_url.encode("utf-8")).hexdigest()[:16]
+    return f"{lang_key}@{digest}"
+
+
+def _script_matches(vtt_text: str, lang: Optional[str]) -> bool:
+    """Reject a track whose script contradicts its declared language."""
+    language = (lang or "").strip().lower()
+    if not language:
+        return True
+
+    ratio = _latin_ratio(_TAG_RE.sub("", vtt_text))
+    if language in _LATIN_LANGS:
+        return ratio >= 0.25
+    if language in {"ar", "fa", "ur"}:
+        return ratio <= 0.75
+    if language in {"ru", "uk", "bg"}:
+        return ratio <= 0.9
+    return True
+
+
+async def _fetch_raw(src_url: str, referer: Optional[str] = None) -> str:
+    """Fetch raw subtitle bytes with the correct upstream Referer header."""
     headers = {"User-Agent": HI_UA, "Accept": "*/*"}
     if referer:
         headers["Referer"] = referer
@@ -46,21 +106,35 @@ async def _fetch_vtt(src_url: str, referer: Optional[str] = None) -> str:
         headers["Referer"] = "https://megaplay.buzz/"
 
     try:
-        r = creq.get(src_url, headers=headers, impersonate="chrome124", timeout=10)
-        if r.status_code == 200:
-            return r.text
+        response = await asyncio.to_thread(
+            creq.get, src_url, headers=headers, impersonate="chrome124", timeout=15
+        )
+        if response.status_code == 200:
+            return response.text
+        logger.warning("Subtitle source %s returned HTTP %s", src_url, response.status_code)
     except Exception as e:
-        logger.error("Failed fetching VTT from %s: %s", src_url, e)
+        logger.error("Failed fetching subtitle from %s: %s", src_url, e)
+
     raise HTTPException(status_code=502, detail="Failed to fetch source subtitle track")
+
+
+async def _fetch_vtt(src_url: str, referer: Optional[str] = None) -> str:
+    """Fetch a subtitle track and normalize ASS/SRT payloads to WebVTT."""
+    raw = await _fetch_raw(src_url, referer)
+    return to_vtt(src_url, raw)
 
 
 @router.get("/proxy")
 async def proxy_subtitle(
     url: str = Query(..., description="Target subtitle VTT URL"),
     ref: Optional[str] = Query(None, description="Upstream referer"),
+    lang: Optional[str] = Query(None, description="Declared language of the track"),
 ):
-    """Proxy third-party WebVTT subtitles with proper upstream Referer header and CORS."""
+    """Proxy third-party subtitles, converting ASS/SRT to WebVTT."""
     content = await _fetch_vtt(url, referer=ref)
+    if not _script_matches(content, lang):
+        logger.warning("Rejecting %s track with mismatched script: %s", lang, url)
+        content = EMPTY_VTT
     return Response(
         content=content,
         media_type="text/vtt",
@@ -84,18 +158,27 @@ async def get_subtitle(
         if not src_url:
             raise HTTPException(status_code=400, detail="src_url is required")
         vtt_content = await _fetch_vtt(src_url, referer=ref)
+
+        # A track labelled English must actually be Latin script. Returning an
+        # empty document is better than leaking another language into the UI.
+        if lang_key == "en" and not _script_matches(vtt_content, "en"):
+            logger.warning("Rejecting non-Latin English subtitle track: %s", src_url)
+            vtt_content = EMPTY_VTT
+
         return Response(
             content=vtt_content,
             media_type="text/vtt",
             headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=86400"},
         )
 
+    cache_lang = _cache_lang(lang_key, src_url or "")
+
     # 2. Check cached translation
     try:
         cached = await db.fetchrow(
             "SELECT vtt_content FROM subtitle_cache WHERE hianime_episode_id = ? AND lang_code = ? AND tier = 'gtx'",
             episode_id,
-            lang_key,
+            cache_lang,
         )
         if cached:
             vtt_str = cached["vtt_content"] or ""
@@ -121,10 +204,26 @@ async def get_subtitle(
 
     # Fetch the selected source track to translate.
     source_raw = await _fetch_vtt(src_url, referer=ref)
+
+    # Translation is only meaningful for a Latin-script source. Anything else
+    # would be silently mangled, so serve an empty track and log instead.
+    if _latin_ratio(_TAG_RE.sub("", source_raw)) < 0.25:
+        logger.warning("Rejecting non-Latin translation source: %s", src_url)
+        return Response(
+            content=EMPTY_VTT,
+            media_type="text/vtt",
+            headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=86400"},
+        )
+
     source_cues = parse_vtt(source_raw)
 
     if not source_cues:
-        raise HTTPException(status_code=500, detail="Failed to parse source subtitle cues")
+        logger.warning("Source subtitle had no readable cues: %s", src_url)
+        return Response(
+            content=EMPTY_VTT,
+            media_type="text/vtt",
+            headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=86400"},
+        )
 
     if lang_key == "en_ai":
         cues_en = await translate_cues_gtx(source_cues, src_lang="id", tgt_lang="en")
@@ -132,9 +231,10 @@ async def get_subtitle(
         try:
             await db.execute(
                 """INSERT INTO subtitle_cache (hianime_episode_id, lang_code, tier, vtt_content)
-                   VALUES (?, 'en_ai', 'gtx', ?)
+                   VALUES (?, ?, 'gtx', ?)
                    ON CONFLICT (hianime_episode_id, lang_code, tier) DO UPDATE SET vtt_content = excluded.vtt_content""",
                 episode_id,
+                cache_lang,
                 en_vtt,
             )
         except Exception as e:
@@ -154,9 +254,10 @@ async def get_subtitle(
     try:
         await db.execute(
             """INSERT INTO subtitle_cache (hianime_episode_id, lang_code, tier, vtt_content)
-               VALUES (?, 'id', 'gtx', ?)
+               VALUES (?, ?, 'gtx', ?)
                ON CONFLICT (hianime_episode_id, lang_code, tier) DO UPDATE SET vtt_content = excluded.vtt_content""",
             episode_id,
+            cache_lang,
             id_vtt,
         )
     except Exception as e:
@@ -175,9 +276,10 @@ async def get_subtitle(
         try:
             await db.execute(
                 """INSERT INTO subtitle_cache (hianime_episode_id, lang_code, tier, vtt_content)
-                   VALUES (?, 'dual_id_en', 'gtx', ?)
+                   VALUES (?, ?, 'gtx', ?)
                    ON CONFLICT (hianime_episode_id, lang_code, tier) DO UPDATE SET vtt_content = excluded.vtt_content""",
                 episode_id,
+                cache_lang,
                 dual_vtt,
             )
         except Exception as e:

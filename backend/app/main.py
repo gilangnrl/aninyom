@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
     with contextlib.suppress(asyncio.CancelledError):
         await maintenance_task
     logger.info("Closing Aninyom database and cache connections...")
+    await stream.close_client()
     await cache.close()
     await db.close()
 
@@ -92,8 +93,30 @@ async def api_root():
 # Frontend Static Hosting (Production / Docker)
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
+ROOT_STATIC_FILES = (
+    "favicon.ico",
+    "favicon.svg",
+    "favicon.png",
+    "favicon-32.png",
+    "favicon-48.png",
+    "favicon-180.png",
+    "favicon-512.png",
+    "apple-touch-icon.png",
+    "icons.svg",
+)
+
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+
+    def register_root_static(static_name: str) -> None:
+        static_path = FRONTEND_DIST / static_name
+
+        @app.get(f"/{static_name}", include_in_schema=False)
+        async def serve_root_static():
+            return FileResponse(static_path)
+
+    for static_name in ROOT_STATIC_FILES:
+        register_root_static(static_name)
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):

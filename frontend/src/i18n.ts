@@ -29,6 +29,7 @@ export interface TranslationSchema {
   bookmarkCompleted: string;
   bookmarkDropped: string;
   bookmarkFavorite: string;
+  playerSettings: string;
   playerQuality: string;
   playerSubtitles: string;
   playerDualSub: string;
@@ -91,6 +92,7 @@ export const translations: Record<"en" | "id", TranslationSchema> = {
     bookmarkCompleted: "Completed",
     bookmarkDropped: "Dropped",
     bookmarkFavorite: "Favorite",
+    playerSettings: "Player settings",
     playerQuality: "Quality",
     playerSubtitles: "Subtitles",
     playerDualSub: "Dual Subtitles (ID + EN)",
@@ -151,6 +153,7 @@ export const translations: Record<"en" | "id", TranslationSchema> = {
     bookmarkCompleted: "Selesai",
     bookmarkDropped: "Berhenti Nonton",
     bookmarkFavorite: "Favorit",
+    playerSettings: "Pengaturan Pemutar",
     playerQuality: "Kualitas",
     playerSubtitles: "Teks Terjemahan",
     playerDualSub: "Dwibahasa (ID + EN)",

@@ -4,7 +4,6 @@ import {
   Compass,
   Home,
   Moon,
-  Play,
   Search,
   Settings2,
   Sun,
@@ -13,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { TranslationSchema } from "../i18n";
+import { BrandMark } from "./BrandMark";
 
 interface NavbarProps {
   activeTab: string;
@@ -92,10 +92,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           className="brand-button"
           aria-label="Aninyom home"
         >
-          <span className="brand-mark" aria-hidden="true">
-            <Play className="h-4 w-4 fill-current" />
-          </span>
-          <span className="brand-name">Aninyom</span>
+          <BrandMark />
+          <span className="brand-name">aninyom</span>
         </button>
 
         <nav className="primary-nav" aria-label="Main navigation">

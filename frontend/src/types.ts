@@ -78,13 +78,26 @@ export interface SubtitleTrack {
   default?: boolean;
 }
 
+export interface AudioTrackOption {
+  lang: string;
+  label: string;
+  kind: "manifest" | "mode";
+  mode?: string | null;
+  index?: number | null;
+  url?: string | null;
+  default?: boolean;
+}
+
 export interface StreamData {
   proxied_url: string;
   master_url: string;
   tracks: SubtitleTrack[];
+  audio_tracks?: AudioTrackOption[];
   intro: { start: number; end: number };
   outro: { start: number; end: number };
+  provider?: string;
   server?: string;
+  available_modes?: string[];
   cached?: boolean;
 }
 

@@ -105,8 +105,18 @@ export const api = {
   },
 
   // Player & Streaming
-  getStreamData: (episodeId: string, mode: "sub" | "dub" = "sub"): Promise<StreamData> =>
-    request<StreamData>(`/player/stream/${episodeId}?mode=${mode}`),
+  getStreamData: (
+    episodeId: string,
+    mode: "sub" | "dub" = "sub",
+    options?: { title?: string; titleAlt?: string; episode?: number; anilistId?: number }
+  ): Promise<StreamData> => {
+    const params = new URLSearchParams({ mode });
+    if (options?.title) params.set("title", options.title);
+    if (options?.titleAlt) params.set("title_alt", options.titleAlt);
+    if (options?.episode != null) params.set("episode", String(options.episode));
+    if (options?.anilistId != null) params.set("anilist_id", String(options.anilistId));
+    return request<StreamData>(`/player/stream/${episodeId}?${params.toString()}`);
+  },
 
   // Watch History & Resume
   getHistory: async (): Promise<WatchHistoryItem[]> => localUserData.getHistory(),

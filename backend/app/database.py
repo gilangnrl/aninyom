@@ -434,6 +434,7 @@ class DatabaseManager:
     async def _init_sqlite_schema(self):
         async with aiosqlite.connect(self._sqlite_path) as conn:
             await conn.executescript(SQLITE_SCHEMA)
+            await self._migrate_sqlite_stream_cache(conn)
             for key, val in DEFAULT_SETTINGS:
                 await conn.execute(
                     "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, val)
@@ -444,6 +445,28 @@ class DatabaseManager:
                     (term, id_term, cat, notes),
                 )
             await conn.commit()
+
+    async def _migrate_sqlite_stream_cache(self, conn) -> None:
+        """Align older stream_cache tables with the current column names.
+
+        Some databases were created with ``subtitles_json``/``headers_json``.
+        ``CREATE TABLE IF NOT EXISTS`` never alters an existing table, so the
+        columns the API writes to would silently not exist.
+        """
+        cursor = await conn.execute("PRAGMA table_info(stream_cache)")
+        columns = {row[1] for row in await cursor.fetchall()}
+
+        if "subtitles" not in columns:
+            await conn.execute("ALTER TABLE stream_cache ADD COLUMN subtitles TEXT")
+            if "subtitles_json" in columns:
+                await conn.execute("UPDATE stream_cache SET subtitles = subtitles_json")
+            logger.info("Migrated stream_cache.subtitles_json -> subtitles")
+
+        if "headers" not in columns:
+            await conn.execute("ALTER TABLE stream_cache ADD COLUMN headers TEXT")
+            if "headers_json" in columns:
+                await conn.execute("UPDATE stream_cache SET headers = headers_json")
+            logger.info("Migrated stream_cache.headers_json -> headers")
 
     async def execute(self, query: str, *args) -> None:
         if self.is_postgres and self.pg_pool:

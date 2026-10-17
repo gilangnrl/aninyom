@@ -7,6 +7,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { Navbar } from "./components/Navbar";
+import { BrandMark } from "./components/BrandMark";
 import { HeroBanner } from "./components/HeroBanner";
 import { AnimeCard } from "./components/AnimeCard";
 import { AnimeDetailsView } from "./components/AnimeDetailsView";
@@ -1254,9 +1255,7 @@ export const App: React.FC = () => {
         <div className="site-footer-inner">
           <div className="site-footer-brand-row">
             <div className="site-footer-brand">
-              <div className="brand-mark footer-brand-mark" aria-hidden="true">
-                <Play className="h-4 w-4 fill-current" />
-              </div>
+              <BrandMark className="footer-brand-mark" />
               <span>Aninyom</span>
             </div>
             <p className="site-footer-note">Release times and availability can vary by title and source.</p>
