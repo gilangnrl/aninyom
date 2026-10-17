@@ -44,6 +44,60 @@ function writeLocal(key: string, value: string) {
   }
 }
 
+const SUBTITLE_PREF_KEY = "aninyom:subtitle-mode";
+const QUALITY_PREF_KEY = "aninyom:video-quality";
+
+function subtitleTrackAvailable(tracks: SubtitleTrack[], lang: string): boolean {
+  return tracks.some((track) => track.lang === lang && Boolean(track.url));
+}
+
+function resolveSubtitlePreference(tracks: SubtitleTrack[]): string {
+  const saved = readLocal(SUBTITLE_PREF_KEY);
+  if (saved === "off") return "off";
+  if (saved && subtitleTrackAvailable(tracks, saved)) return saved;
+
+  const fallback =
+    tracks.find((track) => track.lang === "dual" && track.url) ||
+    tracks.find((track) => track.lang === "id" && track.url) ||
+    tracks.find((track) => track.lang === "en" && track.url);
+  return fallback?.lang || "off";
+}
+
+function applySavedQualityPreference(
+  hls: Hls,
+  levels: { id: number; height: number; bitrate: number }[]
+): number {
+  const saved = readLocal(QUALITY_PREF_KEY);
+  if (!saved || saved === "auto") {
+    hls.currentLevel = -1;
+    return -1;
+  }
+
+  const targetHeight = Number(saved);
+  if (!Number.isFinite(targetHeight) || targetHeight <= 0) {
+    hls.currentLevel = -1;
+    return -1;
+  }
+
+  let match = levels.find((level) => level.height === targetHeight);
+  if (!match) {
+    match = levels
+      .filter((level) => level.height <= targetHeight)
+      .sort((a, b) => b.height - a.height)[0];
+  }
+  if (!match && levels.length > 0) {
+    match = [...levels].sort((a, b) => b.height - a.height)[0];
+  }
+
+  if (match) {
+    hls.currentLevel = match.id;
+    return match.id;
+  }
+
+  hls.currentLevel = -1;
+  return -1;
+}
+
 /**
  * Manifest audio renditions are named by the provider ("Japanese", "English",
  * ...). Spell out which rendition is the dub so the choice is unambiguous.
@@ -169,7 +223,9 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
   const [qualityLevels, setQualityLevels] = useState<{ id: number; height: number; bitrate: number }[]>([]);
   const [currentQuality, setCurrentQuality] = useState<number>(-1); // -1 = Auto
   const [subTracks, setSubTracks] = useState<SubtitleTrack[]>([]);
-  const [selectedSub, setSelectedSub] = useState<string>("id"); // "id", "dual", "en", "off"
+  const [selectedSub, setSelectedSub] = useState<string>(
+    () => readLocal(SUBTITLE_PREF_KEY) || "dual"
+  );
   const [activeCues, setActiveCues] = useState<ParsedCue[]>([]);
   const [currentActiveCue, setCurrentActiveCue] = useState<ParsedCue | null>(null);
   const [subtitleError, setSubtitleError] = useState<string | null>(null);
@@ -239,10 +295,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
         const tracks = data.tracks || [];
         setSubTracks(tracks);
 
-        const defaultTrack = tracks.find((track) => track.lang === "dual" && track.url)
-          || tracks.find((track) => track.lang === "id" && track.url)
-          || tracks.find((track) => track.lang === "en" && track.url);
-        setSelectedSub(defaultTrack?.lang || "off");
+        setSelectedSub(resolveSubtitlePreference(tracks));
       })
       .catch((err) => {
         if (!isMounted) return;
@@ -288,6 +341,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
           bitrate: lvl.bitrate,
         }));
         setQualityLevels(levels);
+        setCurrentQuality(applySavedQualityPreference(hls, levels));
 
         // Audio renditions declared by EXT-X-MEDIA (provider-agnostic).
         const audio = (hls.audioTracks || []).map((track) => ({
@@ -518,6 +572,21 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
     }
     setSelectedAudioTrack(index);
     writeLocal("aninyom:audio-track", String(index));
+    setShowSettingsMenu(false);
+  }, []);
+
+  const selectSubtitle = useCallback((mode: string) => {
+    setSelectedSub(mode);
+    writeLocal(SUBTITLE_PREF_KEY, mode);
+    setShowSubMenu(false);
+  }, []);
+
+  const selectQuality = useCallback((levelId: number, height?: number) => {
+    if (hlsRef.current) {
+      hlsRef.current.currentLevel = levelId;
+    }
+    setCurrentQuality(levelId);
+    writeLocal(QUALITY_PREF_KEY, levelId === -1 ? "auto" : String(height ?? levelId));
     setShowSettingsMenu(false);
   }, []);
 
@@ -1020,7 +1089,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
                     {t.playerSubtitles}
                   </div>
                   <button
-                    onClick={() => { setSelectedSub("dual"); setShowSubMenu(false); }}
+                    onClick={() => selectSubtitle("dual")}
                     className="media-menu-option flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold"
                     aria-pressed={selectedSub === "dual"}
                     disabled={!hasSubtitleTrack("dual")}
@@ -1032,7 +1101,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
                       : <span className="media-track-unavailable">Unavailable</span>}
                   </button>
                   <button
-                    onClick={() => { setSelectedSub("id"); setShowSubMenu(false); }}
+                    onClick={() => selectSubtitle("id")}
                     className="media-menu-option flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold"
                     aria-pressed={selectedSub === "id"}
                     disabled={!hasSubtitleTrack("id")}
@@ -1044,7 +1113,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
                       : <span className="media-track-unavailable">Unavailable</span>}
                   </button>
                   <button
-                    onClick={() => { setSelectedSub("en"); setShowSubMenu(false); }}
+                    onClick={() => selectSubtitle("en")}
                     className="media-menu-option flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold"
                     aria-pressed={selectedSub === "en"}
                     disabled={!hasSubtitleTrack("en")}
@@ -1056,7 +1125,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
                       : <span className="media-track-unavailable">Unavailable</span>}
                   </button>
                   <button
-                    onClick={() => { setSelectedSub("en-ai"); setShowSubMenu(false); }}
+                    onClick={() => selectSubtitle("en-ai")}
                     className="media-menu-option flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold"
                     aria-pressed={selectedSub === "en-ai"}
                     disabled={!hasSubtitleTrack("en-ai")}
@@ -1068,7 +1137,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
                       : <span className="media-track-unavailable">Unavailable</span>}
                   </button>
                   <button
-                    onClick={() => { setSelectedSub("off"); setShowSubMenu(false); }}
+                    onClick={() => selectSubtitle("off")}
                     className="media-menu-option flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold"
                     aria-pressed={selectedSub === "off"}
                   >
@@ -1139,11 +1208,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
                     {t.playerQuality}
                   </div>
                   <button
-                    onClick={() => {
-                      if (hlsRef.current) hlsRef.current.currentLevel = -1;
-                      setCurrentQuality(-1);
-                      setShowSettingsMenu(false);
-                    }}
+                    onClick={() => selectQuality(-1)}
                     className="media-menu-option flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold"
                     aria-pressed={currentQuality === -1}
                   >
@@ -1153,11 +1218,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
                   {qualityLevels.map((lvl) => (
                     <button
                       key={lvl.id}
-                      onClick={() => {
-                        if (hlsRef.current) hlsRef.current.currentLevel = lvl.id;
-                        setCurrentQuality(lvl.id);
-                        setShowSettingsMenu(false);
-                      }}
+                      onClick={() => selectQuality(lvl.id, lvl.height)}
                       className="media-menu-option flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold"
                       aria-pressed={currentQuality === lvl.id}
                     >
