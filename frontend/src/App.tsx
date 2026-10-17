@@ -625,7 +625,7 @@ export const App: React.FC = () => {
               <div className="w-full h-[500px] flex flex-col items-center justify-center space-y-4">
                 <div className="w-10 h-10 border-3 border-[#7aa2f7] border-t-transparent rounded-full animate-spin" />
                 <p className="text-xs text-[#c3c6d3] tracking-widest uppercase font-bold">
-                  Ingesting feeds from AniList & Megaplay CDN...
+                  {t.loading}
                 </p>
               </div>
             ) : homeError ? (

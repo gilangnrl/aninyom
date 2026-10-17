@@ -314,7 +314,7 @@ export const BrowseView: React.FC<BrowseViewProps> = ({
             </h1>
           </div>
           <p className="text-xs md:text-sm text-[#c3c6d3] mt-1 pl-4.5">
-            Real-time catalog synchronized with live broadcast schedule and AniList index
+            {t.browseCatalogHint}
           </p>
         </div>
 
@@ -562,7 +562,7 @@ export const BrowseView: React.FC<BrowseViewProps> = ({
         <div className="py-24 flex flex-col items-center justify-center space-y-3">
           <div className="w-8 h-8 border-3 border-[#7aa2f7] border-t-transparent rounded-full animate-spin" />
           <p className="text-xs text-[#c3c6d3] tracking-widest uppercase font-bold">
-            Querying AniList catalog...
+            {t.loading}
           </p>
         </div>
       ) : results.length === 0 ? (

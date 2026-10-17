@@ -58,6 +58,8 @@ export interface TranslationSchema {
   lexiconAdded: string;
   emptyWatchlist: string;
   emptyHistory: string;
+  loading: string;
+  browseCatalogHint: string;
 }
 
 export const translations: Record<"en" | "id", TranslationSchema> = {
@@ -121,6 +123,8 @@ export const translations: Record<"en" | "id", TranslationSchema> = {
     lexiconAdded: "Term saved to translation lexicon!",
     emptyWatchlist: "Your watchlist is currently empty. Explore trending shows and bookmark your favorites!",
     emptyHistory: "No watch history recorded yet. Start watching an episode!",
+    loading: "Loading...",
+    browseCatalogHint: "Search and filter titles across the catalog.",
   },
   id: {
     appName: "Aninyom",
@@ -182,5 +186,7 @@ export const translations: Record<"en" | "id", TranslationSchema> = {
     lexiconAdded: "Istilah tersimpan ke kamus penerjemah!",
     emptyWatchlist: "Daftar tonton Anda masih kosong. Cari anime menarik dan tandai favorit Anda!",
     emptyHistory: "Belum ada riwayat tontonan. Mulai tonton episode pertama Anda!",
+    loading: "Memuat...",
+    browseCatalogHint: "Cari dan saring judul di katalog anime.",
   }
 };
