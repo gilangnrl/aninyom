@@ -285,7 +285,9 @@ async def get_stream_data(
     except ProviderError as e:
         if mode_str == "sub":
             logger.error("All providers failed for %s: %s", episode_id, e)
-            raise HTTPException(status_code=502, detail=f"Failed to resolve stream: {e}")
+            raise HTTPException(
+                status_code=502, detail="Failed to resolve stream. Please try again later."
+            )
         logger.warning(
             "Dubbed stream unavailable for %s (%s). Falling back to sub.", episode_id, e
         )
@@ -294,7 +296,9 @@ async def get_stream_data(
             result = await resolve_stream(request)
         except ProviderError as e2:
             logger.error("All providers failed for %s: %s", episode_id, e2)
-            raise HTTPException(status_code=502, detail=f"Failed to resolve stream: {e2}")
+            raise HTTPException(
+                status_code=502, detail="Failed to resolve stream. Please try again later."
+            )
 
     master_url = result.master_url
     referer = result.referer

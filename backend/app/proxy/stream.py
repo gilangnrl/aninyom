@@ -184,7 +184,7 @@ async def fetch_playlist_text(url: str, headers: Dict[str, str], timeout: float 
     logger.warning("Failed fetching playlist %s: %s", url, last_error)
     raise HTTPException(
         status_code=502,
-        detail=f"Failed to fetch upstream playlist: {last_error}",
+        detail="Failed to fetch upstream playlist",
     )
 
 
@@ -230,14 +230,14 @@ async def proxy_video(
         )
     except httpx.HTTPError as e:
         logger.warning("Upstream resource request failed for %s: %s", url, e)
-        raise HTTPException(status_code=502, detail=f"Failed to reach upstream resource: {e}")
+        raise HTTPException(status_code=502, detail="Failed to reach upstream resource")
 
     if upstream.status_code >= 400:
         await upstream.aclose()
         logger.warning("Upstream resource %s returned HTTP %s", url, upstream.status_code)
         raise HTTPException(
             status_code=502,
-            detail=f"Upstream resource returned HTTP {upstream.status_code}",
+            detail="Upstream resource returned an error",
         )
 
     # Some CDNs serve playlists from extension-less URLs. Trust the upstream

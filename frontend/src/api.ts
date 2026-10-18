@@ -19,7 +19,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   });
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.detail || `Request failed with status ${res.status}`);
+    // The backend returns copy that is safe to show. Technical context (upstream
+    // provider failures, validation detail) is only logged, not surfaced.
+    console.error(`API ${res.status} ${endpoint} failed`, errorData?.detail ?? errorData);
+    const detail = typeof errorData?.detail === "string" ? errorData.detail : "";
+    throw new Error(detail || "Something went wrong. Please try again.");
   }
   return res.json();
 }

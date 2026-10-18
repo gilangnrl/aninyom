@@ -282,4 +282,4 @@ async def get_anime_episodes(anilist_id: int, title: Optional[str] = Query(None)
         return episodes_payload
     except Exception as e:
         logger.error("Failed fetching episodes for anilist_id %s: %s", anilist_id, e)
-        raise HTTPException(status_code=500, detail=f"Failed to fetch episodes: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch episodes")
