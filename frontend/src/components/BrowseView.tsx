@@ -126,23 +126,12 @@ export const BrowseView: React.FC<BrowseViewProps> = ({
     setSelectedStatus(initialStatus);
   }, [initialStatus]);
 
-  // Sync URL hash with current active filters
+  // Report the active filters up to App, which owns the browse URL and decides
+  // whether a change is a new history entry or an in-place update. Writing the
+  // address here as well would race that decision (this effect runs before the
+  // parent's) and silently drop the entry.
   const syncUrlHash = useCallback(
     (nextState: BrowseFilterState) => {
-      const params = new URLSearchParams();
-      if (nextState.query) params.set("q", nextState.query);
-      if (nextState.genre) params.set("genre", nextState.genre);
-      if (nextState.format) params.set("format", nextState.format);
-      if (nextState.sort && nextState.sort !== "popular") params.set("sort", nextState.sort);
-      if (nextState.season) params.set("season", nextState.season);
-      if (nextState.year) params.set("year", nextState.year.toString());
-      if (nextState.status) params.set("status", nextState.status);
-
-      const qs = params.toString();
-      const newHash = qs ? `#/browse?${qs}` : `#/browse`;
-      if (window.location.hash !== newHash) {
-        window.history.replaceState(null, "", newHash);
-      }
       if (onFilterChange) {
         onFilterChange(nextState);
       }

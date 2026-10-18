@@ -237,10 +237,10 @@ export const App: React.FC = () => {
     }
   }, [playingEpisode]);
 
+  // Opening a details page is a navigation; the sync effect pushes #/anime/<id>.
   const handleSelectAnime = useCallback((anime: AnimeItem) => {
     setSelectedAnime(anime);
     setActiveTab("details");
-    window.location.hash = `#/anime/${anime.anilist_id}`;
   }, []);
 
   // Home Screen Content State
@@ -327,48 +327,118 @@ export const App: React.FC = () => {
   const closeFooterInfo = useCallback(() => setFooterInfoPage(null), []);
 
   const isHashParsedRef = useRef(false);
+  const playingEpisodeRef = useRef<PlayingEpisodeState | null>(playingEpisode);
+  // The view a history entry represents: a tab, an anime's details page, or the player.
+  const lastViewKeyRef = useRef<string | null>(null);
+  // Set by actions that need to control how the next state change is recorded
+  // ("pop" = step back one entry, "replace" = overwrite the current entry).
+  const pendingHistoryModeRef = useRef<"push" | "replace" | "pop" | null>(null);
 
-  // Sync state to URL hash
+  // Sync state to URL hash and browser history.
+  //
+  // Entering a different view (another tab, an anime page, the player) pushes a new
+  // history entry, while changes inside the same view (e.g. another episode) only
+  // replace the current one. That keeps the browser Back button meaningful on every
+  // page instead of collapsing visits into a single entry.
   useEffect(() => {
-    if (!isHashParsedRef.current) return;
+    playingEpisodeRef.current = playingEpisode;
 
-    if (playingEpisode) {
-      const targetHash = `#/watch/${playingEpisode.anime.anilist_id}/${playingEpisode.episodeNumber}`;
-      if (window.location.hash !== targetHash) {
-        window.history.replaceState(null, "", targetHash);
-      }
-    } else if (activeTab === "details" && selectedAnime) {
-      const targetHash = `#/anime/${selectedAnime.anilist_id}`;
-      if (window.location.hash !== targetHash) {
-        window.history.replaceState(null, "", targetHash);
-      }
-    } else if (activeTab === "browse") {
-      if (!window.location.hash.startsWith("#/browse")) {
-        window.history.replaceState(null, "", "#/browse");
-      }
-    } else {
-      const targetHash = `#/${activeTab}`;
-      if (window.location.hash !== targetHash && !(activeTab === "home" && !window.location.hash)) {
-        window.history.replaceState(null, "", targetHash);
-      }
+    const viewKey = playingEpisode
+      ? `watch:${playingEpisode.anime.anilist_id}`
+      : activeTab === "details" && selectedAnime
+        ? `details:${selectedAnime.anilist_id}`
+        : `tab:${activeTab}`;
+
+    if (!isHashParsedRef.current) {
+      // Seed the starting view so the first real navigation counts as a push.
+      lastViewKeyRef.current = viewKey;
+      return;
     }
-  }, [playingEpisode, selectedAnime, activeTab]);
+
+    const previousViewKey = lastViewKeyRef.current;
+    lastViewKeyRef.current = viewKey;
+
+    const requestedMode = pendingHistoryModeRef.current;
+    pendingHistoryModeRef.current = null;
+    if (requestedMode === "pop") {
+      window.history.back();
+      return;
+    }
+
+    let targetHash: string | null = null;
+    if (playingEpisode) {
+      targetHash = `#/watch/${playingEpisode.anime.anilist_id}/${playingEpisode.episodeNumber}`;
+    } else if (activeTab === "details" && selectedAnime) {
+      targetHash = `#/anime/${selectedAnime.anilist_id}`;
+    } else if (activeTab === "browse") {
+      // Browse reflects its filters in the address so back/forward restores them.
+      const params = new URLSearchParams();
+      if (searchQuery) params.set("q", searchQuery);
+      if (selectedGenre) params.set("genre", selectedGenre);
+      if (browseFormat) params.set("format", browseFormat);
+      if (browseSort && browseSort !== "popular") params.set("sort", browseSort);
+      if (browseSeason) params.set("season", browseSeason);
+      if (browseYear) params.set("year", browseYear.toString());
+      if (browseStatus) params.set("status", browseStatus);
+      const query = params.toString();
+      targetHash = query ? `#/browse?${query}` : "#/browse";
+    } else if (activeTab === "home" && !window.location.hash) {
+      targetHash = null;
+    } else {
+      targetHash = `#/${activeTab}`;
+    }
+
+    if (targetHash === null || window.location.hash === targetHash) return;
+
+    const mode =
+      requestedMode ?? (previousViewKey === null || previousViewKey === viewKey ? "replace" : "push");
+
+    if (mode === "push") {
+      window.history.pushState({ aninyom: true }, "", targetHash);
+    } else {
+      // Preserve the entry's own marker so "back"-style actions can still tell an
+      // entry created inside the app apart from one the visitor arrived at from
+      // outside it.
+      window.history.replaceState(
+        window.history.state?.aninyom ? { aninyom: true } : null,
+        "",
+        targetHash
+      );
+    }
+  }, [
+    playingEpisode,
+    selectedAnime,
+    activeTab,
+    searchQuery,
+    selectedGenre,
+    browseFormat,
+    browseSort,
+    browseSeason,
+    browseYear,
+    browseStatus,
+  ]);
 
   // Handle URL hash on initial mount and hashchange
   useEffect(() => {
     const parseHash = async () => {
       const hash = window.location.hash;
+      const isInitialParse = !isHashParsedRef.current;
       try {
         if (!hash || hash === "#" || hash === "#/" || hash === "#/home") {
-          if (playingEpisode) {
+          // On a fresh load a restored player session (from sessionStorage) wins and
+          // the address is normalised onto that player. Afterwards the same address
+          // means the visitor navigated back out of the player, so it has to close.
+          if (isInitialParse && playingEpisodeRef.current) {
+            const restored = playingEpisodeRef.current;
             window.history.replaceState(
               null,
               "",
-              `#/watch/${playingEpisode.anime.anilist_id}/${playingEpisode.episodeNumber}`
+              `#/watch/${restored.anime.anilist_id}/${restored.episodeNumber}`
             );
-          } else {
-            setActiveTab("home");
+            return;
           }
+          setPlayingEpisode(null);
+          setActiveTab("home");
           return;
         }
 
@@ -377,10 +447,11 @@ export const App: React.FC = () => {
           const anilistId = parseInt(parts[0], 10);
           const epNum = parseInt(parts[1], 10) || 1;
           if (anilistId) {
+            const currentPlayer = playingEpisodeRef.current;
             if (
-              playingEpisode &&
-              playingEpisode.anime.anilist_id === anilistId &&
-              playingEpisode.episodeNumber === epNum
+              currentPlayer &&
+              currentPlayer.anime.anilist_id === anilistId &&
+              currentPlayer.episodeNumber === epNum
             ) {
               return;
             }
@@ -411,6 +482,7 @@ export const App: React.FC = () => {
           const idStr = hash.replace("#/anime/", "").split("/")[0];
           const anilistId = parseInt(idStr, 10);
           if (anilistId) {
+            setPlayingEpisode(null);
             try {
               setActiveTab("details");
               const anime = await api.getAnimeDetails(anilistId);
@@ -423,6 +495,7 @@ export const App: React.FC = () => {
         }
 
         if (hash.startsWith("#/browse")) {
+          setPlayingEpisode(null);
           setActiveTab("browse");
           const queryIndex = hash.indexOf("?");
           if (queryIndex !== -1) {
@@ -446,10 +519,12 @@ export const App: React.FC = () => {
           return;
         }
         if (hash.startsWith("#/watchlist")) {
+          setPlayingEpisode(null);
           setActiveTab("watchlist");
           return;
         }
         if (hash.startsWith("#/settings")) {
+          setPlayingEpisode(null);
           setActiveTab("settings");
           return;
         }
@@ -580,30 +655,28 @@ export const App: React.FC = () => {
     }
   };
 
-  // Close player and refresh watch history
+  // Close player and refresh watch history. The player is its own history entry,
+  // so leaving it walks back to whatever view the visitor came from.
   const handleClosePlayer = () => {
+    pendingHistoryModeRef.current = window.history.state?.aninyom ? "pop" : "replace";
     setPlayingEpisode(null);
     try {
       sessionStorage.removeItem("aninyom_active_player");
     } catch {}
-    if (activeTab === "details" && selectedAnime) {
-      window.history.replaceState(null, "", `#/anime/${selectedAnime.anilist_id}`);
-    } else {
-      window.history.replaceState(null, "", `#/${activeTab}`);
-    }
     api.getHistory().then(setRecentHistory).catch(() => {});
   };
 
   const handleOpenDetailsFromPlayer = useCallback(() => {
     if (!playingEpisode) return;
     const anime = playingEpisode.anime;
+    // Leaves the player for the details page, taking the player's place in history.
+    pendingHistoryModeRef.current = "replace";
     setSelectedAnime(anime);
     setActiveTab("details");
     setPlayingEpisode(null);
     try {
       sessionStorage.removeItem("aninyom_active_player");
     } catch {}
-    window.history.replaceState(null, "", `#/anime/${anime.anilist_id}`);
     api.getHistory().then(setRecentHistory).catch(() => {});
   }, [playingEpisode]);
 
@@ -1201,8 +1274,14 @@ export const App: React.FC = () => {
               }}
               onSelectAnime={handleSelectAnime}
               onBack={() => {
+                // Step back out of the details page when it was reached inside the
+                // app; only a direct link has nowhere to go, so fall back to home.
+                if (window.history.state?.aninyom) {
+                  window.history.back();
+                  return;
+                }
+                pendingHistoryModeRef.current = "replace";
                 setActiveTab("home");
-                window.location.hash = "#/home";
               }}
               lang={lang}
               t={t}
