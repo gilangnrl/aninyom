@@ -161,6 +161,68 @@ def get_episodes(slug_or_id: str) -> List[Dict[str, Any]]:
     return episodes
 
 
+def extract_megaplay(embed_url: str, referer: str = "") -> Dict[str, Any]:
+    """Resolve a Megaplay embed page into a playable master playlist.
+
+    Megaplay exposes a numeric ``data-id`` on its embed page; the matching
+    ``/stream/getSourcesNew`` payload carries either an AES-encrypted source
+    blob (``enc``) or a plain ``sources`` list, plus subtitle tracks and skip
+    markers. Shared by the HiAnime scraper and providers that front Megaplay.
+    """
+    origin = re.sub(r"^(https?://[^/]*).*", r"\1", embed_url)
+    embed_page = _fetch(embed_url, referer=referer or f"{origin}/")
+    match = re.search(r'data-id="(\d+)"', embed_page)
+    if not match:
+        raise RuntimeError("Megaplay embed exposed no data-id")
+
+    data_id = match.group(1)
+    try:
+        sources_text = _fetch(f"{origin}/stream/getSourcesNew?id={data_id}", referer=embed_url)
+    except Exception:
+        sources_text = _fetch(f"{origin}/stream/getSources?id={data_id}", referer=embed_url)
+
+    cfg = json.loads(sources_text)
+    master_url = ""
+    enc = cfg.get("enc")
+    if enc and isinstance(enc, str):
+        master_url = json.loads(mega_decrypt(enc)).get("file", "")
+    elif isinstance(cfg.get("sources"), list) and cfg["sources"]:
+        master_url = cfg["sources"][0].get("file", "")
+    elif isinstance(cfg.get("sources"), dict):
+        master_url = cfg["sources"].get("file", "")
+
+    if not master_url:
+        raise RuntimeError("Megaplay returned no master playlist")
+    if master_url.startswith("/"):
+        master_url = origin + master_url
+
+    tracks = []
+    raw_subs = cfg.get("tracks") or cfg.get("subtitles") or []
+    for track in raw_subs:
+        file_url = str(track.get("file") or track.get("src") or "")
+        kind = str(track.get("kind") or "").lower()
+        is_vtt_url = bool(re.search(r"\.vtt(?:$|[?#])", file_url, re.IGNORECASE))
+        if file_url and (is_vtt_url or "caption" in kind or "subtitle" in kind):
+            label = track.get("label") or track.get("lang") or "Unknown"
+            lang = str(track.get("lang") or track.get("language") or label or "").strip().lower()
+            tracks.append(
+                {
+                    "file": file_url,
+                    "label": label,
+                    "lang": lang,
+                    "default": bool(track.get("default", False)),
+                }
+            )
+
+    return {
+        "master_url": master_url,
+        "referer": f"{origin}/",
+        "tracks": tracks,
+        "intro": cfg.get("intro", {"start": 0, "end": 0}),
+        "outro": cfg.get("outro", {"start": 0, "end": 0}),
+    }
+
+
 def extract_stream(episode_id: str, mode: str = "sub") -> Dict[str, Any]:
     """Extract stream master M3U8, variants, and subtitle tracks for an episode."""
     servers_url = f"{BASE_URL}/api/theme/episode/servers?episodeId={episode_id}"
@@ -278,65 +340,17 @@ def extract_stream(episode_id: str, mode: str = "sub") -> Dict[str, Any]:
                     }
 
             # Strategy 2: Check for data-id (Megaplay)
-            m = re.search(r'data-id="(\d+)"', embed_page)
-            if m:
-                data_id = m.group(1)
-                try:
-                    sources_text = _fetch(
-                        f"{origin}/stream/getSourcesNew?id={data_id}", referer=embed
-                    )
-                except Exception:
-                    sources_text = _fetch(
-                        f"{origin}/stream/getSources?id={data_id}", referer=embed
-                    )
-
-                cfg = json.loads(sources_text)
-                master_url = ""
-
-                enc = cfg.get("enc")
-                if enc and isinstance(enc, str):
-                    decrypted = json.loads(mega_decrypt(enc))
-                    master_url = decrypted.get("file", "")
-                elif isinstance(cfg.get("sources"), list) and cfg["sources"]:
-                    master_url = cfg["sources"][0].get("file", "")
-                elif isinstance(cfg.get("sources"), dict):
-                    master_url = cfg["sources"].get("file", "")
-
-                if master_url:
-                    if master_url.startswith("/"):
-                        master_url = origin + master_url
-
-                    tracks = []
-                    raw_subs = cfg.get("tracks") or cfg.get("subtitles") or []
-                    for t in raw_subs:
-                        file_url = str(t.get("file") or t.get("src") or "")
-                        kind = str(t.get("kind") or "").lower()
-                        is_vtt_url = bool(re.search(r"\.vtt(?:$|[?#])", file_url, re.IGNORECASE))
-                        if file_url and (is_vtt_url or "caption" in kind or "subtitle" in kind):
-                            lbl = t.get("label") or t.get("lang") or "Unknown"
-                            lng = (
-                                str(t.get("lang") or t.get("language") or lbl or "")
-                                .strip()
-                                .lower()
-                            )
-                            tracks.append(
-                                {
-                                    "file": file_url,
-                                    "label": lbl,
-                                    "lang": lng,
-                                    "default": bool(t.get("default", False)),
-                                }
-                            )
-
-                    return {
-                        "server": srv["name"],
-                        "master_url": master_url,
-                        "referer": referer,
-                        "tracks": tracks,
-                        "intro": cfg.get("intro", {"start": 0, "end": 0}),
-                        "outro": cfg.get("outro", {"start": 0, "end": 0}),
-                        "available_modes": available_modes,
-                    }
+            if re.search(r'data-id="(\d+)"', embed_page):
+                mega = extract_megaplay(embed, referer=f"{BASE_URL}/")
+                return {
+                    "server": srv["name"],
+                    "master_url": mega["master_url"],
+                    "referer": mega["referer"],
+                    "tracks": mega["tracks"],
+                    "intro": mega["intro"],
+                    "outro": mega["outro"],
+                    "available_modes": available_modes,
+                }
         except Exception as e:
             last_error = e
             logger.warning("Failed extracting server %s (%s): %s", srv["name"], srv["embed"], e)

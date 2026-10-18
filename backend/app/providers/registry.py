@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List
 
 from ..proxy.stream import DEFAULT_HEADERS, fetch_playlist_text
+from .anichi import AnichiProvider
 from .anizone import AnizoneProvider
 from .base import (
     AudioTrack,
@@ -21,9 +22,10 @@ logger = logging.getLogger("aninyom.providers.registry")
 _PROVIDER_CLASSES = {
     "hianime": HianimeProvider,
     "anizone": AnizoneProvider,
+    "anichi": AnichiProvider,
 }
 
-DEFAULT_PROVIDER_ORDER = "hianime,anizone"
+DEFAULT_PROVIDER_ORDER = "hianime,anizone,anichi"
 
 _VARIANT_RE = re.compile(r"^#EXT-X-STREAM-INF:", re.MULTILINE)
 _ATTR_RE = re.compile(r'([A-Z0-9-]+)=("[^"]*"|[^,]*)')
