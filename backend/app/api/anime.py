@@ -4,6 +4,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 
 from ..cache import cache
 from ..database import db
@@ -27,8 +28,6 @@ def _unavailable(action: str) -> HTTPException:
 
 
 @router.get("/trending")
-
-
 async def get_trending(page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=50)):
     """Get currently trending anime."""
     try:
@@ -40,8 +39,6 @@ async def get_trending(page: int = Query(1, ge=1), per_page: int = Query(20, ge=
 
 
 @router.get("/popular")
-
-
 async def get_popular(page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=50)):
     """Get all-time popular anime."""
     try:
@@ -53,8 +50,6 @@ async def get_popular(page: int = Query(1, ge=1), per_page: int = Query(20, ge=1
 
 
 @router.get("/seasonal")
-
-
 async def get_seasonal(
     season: Optional[str] = Query(None, description="WINTER, SPRING, SUMMER, FALL"),
     year: Optional[int] = Query(None, description="Year, e.g. 2026"),
@@ -76,8 +71,6 @@ async def get_seasonal(
 
 
 @router.get("/recent")
-
-
 async def get_recent_releases(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=50),
@@ -92,8 +85,6 @@ async def get_recent_releases(
 
 
 @router.get("/upcoming")
-
-
 async def get_upcoming(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=50),
@@ -108,8 +99,6 @@ async def get_upcoming(
 
 
 @router.get("/search")
-
-
 async def search_anime(
     q: Optional[str] = Query(None, description="Search query"),
     genre: Optional[str] = Query(None, description="Genre filter"),
@@ -151,7 +140,7 @@ async def search_anime(
             sort_list = [sort.strip().upper()]
 
     try:
-        results = await metadata.search_anime(
+        results, has_more = await metadata.search_with_more(
             search=q,
             genre=genre,
             format=format,
@@ -162,15 +151,16 @@ async def search_anime(
             page=page,
             per_page=per_page,
         )
-        return results
+        return JSONResponse(
+            content=results,
+            headers={"X-Has-More": "true" if has_more else "false"},
+        )
     except Exception as e:
         logger.error("Search failed: %s", e)
         raise _unavailable("search") from e
 
 
 @router.get("/{anilist_id}")
-
-
 async def get_anime_details(anilist_id: int):
     """Get detailed anime information by AniList ID."""
     try:
@@ -190,8 +180,6 @@ async def get_anime_details(anilist_id: int):
 
 
 @router.get("/{anilist_id}/episodes")
-
-
 async def get_anime_episodes(anilist_id: int, title: Optional[str] = Query(None)):
     """Fetch episode list for an anime, mapping AniList title to HiAnime."""
     # 1. Fetch details to get all possible title candidates

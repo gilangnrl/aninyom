@@ -171,7 +171,14 @@ async def _first_success(
                     )
                     continue
 
-                if not result:
+                # An explicit ``([], False)`` is a valid "no more results"
+                # answer, not a provider failure.
+                if isinstance(result, tuple):
+                    items, has_more = result
+                    if not items and has_more:
+                        errors.append(f"{provider}: empty page")
+                        continue
+                elif not result:
                     errors.append(f"{provider}: empty result")
                     logger.warning(
                         "Metadata provider %s returned no data for %s", provider, operation
@@ -283,6 +290,60 @@ async def search_anime(
         )
 
     return await _first_success("search", cache_key=cache_key, cache_ttl=600, call=call)
+
+
+async def search_with_more(
+    search: Optional[str] = None,
+    genre: Optional[str] = None,
+    format: Optional[str] = None,
+    sort: Optional[List[str]] = None,
+    season: Optional[str] = None,
+    year: Optional[int] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> Any:
+    """Search returning ``(items, has_more)``.
+
+    ``has_more`` is reported by the provider that served the page, so callers
+    never offer a next page that the upstream cannot actually produce.
+    """
+    cache_key = (
+        "anilist:search:"
+        f"{search}:{genre}:{format}:{sort}:{season}:{year}:{status}:{page}:{per_page}"
+    )
+
+    async def call(provider: str) -> Any:
+        module = _PROVIDERS[provider]
+        page_fn = getattr(module, "search_page", None)
+        if page_fn is not None:
+            return await page_fn(
+                search=search,
+                genre=genre,
+                format=format,
+                sort=sort,
+                season=season,
+                year=year,
+                status=status,
+                page=page,
+                per_page=per_page,
+            )
+
+        items = await module.search_anime_anilist(
+            search=search,
+            genre=genre,
+            format=format,
+            sort=sort,
+            season=season,
+            year=year,
+            status=status,
+            page=page,
+            per_page=per_page,
+        )
+        # Providers without page metadata: a full page implies there may be more.
+        return items, len(items) >= min(per_page, 20)
+
+    return await _first_success("search", cache_key=f"page:{cache_key}", cache_ttl=600, call=call)
 
 
 async def _details_via(provider: str, anilist_id: int) -> Optional[Dict[str, Any]]:

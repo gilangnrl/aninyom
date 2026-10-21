@@ -194,7 +194,7 @@ export const BrowseView: React.FC<BrowseViewProps> = ({
       const effectiveYear = sortBy === "seasonal" && !y ? currentSeasonYear.year : y;
       const effectiveSort = sortBy === "seasonal" ? "popular" : sortBy;
 
-      api.searchAnime({
+      api.searchAnimePage({
         query: q,
         genre: g,
         format: f,
@@ -204,7 +204,7 @@ export const BrowseView: React.FC<BrowseViewProps> = ({
         status: st,
         page: pageNumber,
       })
-        .then((items) => {
+        .then(({ items, hasMore: more }) => {
           const mapped: DisplayItem[] = items.map((a) => ({
             anime: a,
           }));
@@ -218,7 +218,7 @@ export const BrowseView: React.FC<BrowseViewProps> = ({
           } else {
             setResults(mapped);
           }
-          setHasMore(items.length >= 15);
+          setHasMore(more);
           setPage(pageNumber);
         })
         .catch((err) => {

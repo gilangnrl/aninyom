@@ -28,6 +28,33 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return res.json();
 }
 
+/**
+ * Same as `request`, but also reports whether the server says another page
+ * exists. The backend sends `X-Has-More` because the payload is a bare array;
+ * guessing from page length wrongly hides "load more" on short pages.
+ */
+async function requestWithPagination<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<{ items: T; hasMore: boolean | undefined }> {
+  const res = await fetch(`${API_BASE}${endpoint}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    console.error(`API ${res.status} ${endpoint} failed`, errorData?.detail ?? errorData);
+    const detail = typeof errorData?.detail === "string" ? errorData.detail : "";
+    throw new Error(detail || "Something went wrong. Please try again.");
+  }
+  const data = await res.json();
+  const header = res.headers.get("X-Has-More");
+  return { items: data as T, hasMore: header === null ? undefined : header === "true" };
+}
+
 export interface SearchAnimeOptions {
   query?: string;
   genre?: string;
@@ -96,6 +123,30 @@ export const api = {
     if (opts.year) url += `&year=${encodeURIComponent(opts.year)}`;
     if (opts.status) url += `&status=${encodeURIComponent(opts.status)}`;
     return request<AnimeItem[]>(url);
+  },
+
+  /**
+   * Search including the server's pagination verdict.
+   *
+   * Providers differ in whether they can serve a second page; the backend
+   * reports that explicitly via `X-Has-More` so the UI never offers a "load
+   * more" that returns nothing (or, worse, repeats the same rows).
+   */
+  searchAnimePage: async (
+    opts: SearchAnimeOptions = {}
+  ): Promise<{ items: AnimeItem[]; hasMore: boolean }> => {
+    const pageNum = opts.page || 1;
+    let url = `/anime/search?page=${pageNum}`;
+    if (opts.query) url += `&q=${encodeURIComponent(opts.query)}`;
+    if (opts.genre) url += `&genre=${encodeURIComponent(opts.genre)}`;
+    if (opts.format) url += `&format=${encodeURIComponent(opts.format)}`;
+    if (opts.sort) url += `&sort=${encodeURIComponent(opts.sort)}`;
+    if (opts.season) url += `&season=${encodeURIComponent(opts.season)}`;
+    if (opts.year) url += `&year=${encodeURIComponent(opts.year)}`;
+    if (opts.status) url += `&status=${encodeURIComponent(opts.status)}`;
+    const { items, hasMore } = await requestWithPagination<AnimeItem[]>(url);
+    // Fall back to the old length heuristic only when the header is absent.
+    return { items, hasMore: hasMore ?? items.length >= 15 };
   },
 
   // Anime Details & Episodes

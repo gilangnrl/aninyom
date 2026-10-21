@@ -12,7 +12,7 @@ All public functions return the normalized dict shape produced by
 import asyncio
 import datetime
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -258,10 +258,48 @@ def _attach_categories(
     return enriched
 
 
-async def _collection(params: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _is_filtered(params: Dict[str, Any]) -> bool:
+    """True when the request carries a Kitsu ``filter[...]`` parameter.
+
+    Filtered requests cannot be paginated reliably (see ``search_page``).
+    """
+    return any(key.startswith("filter[") for key in params)
+
+
+def _meta_count(payload: Dict[str, Any]) -> Optional[int]:
+    """Total result count advertised by Kitsu, when present."""
+    meta = payload.get("meta") or {}
+    try:
+        return int(meta.get("count"))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _collection(params: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], bool, Optional[int]]:
+    """Fetch one page and report whether another page genuinely exists.
+
+    Kitsu's ``page[offset]`` is unreliable for *relevance* searches (text and
+    status filters): offsets inside the first block return that same block
+    again, so page 2 can be an exact duplicate of page 1 while still looking
+    like a valid page. Browsing by sort is unaffected.
+
+    Returns ``(items, has_more, total)`` where ``has_more`` is derived from the
+    advertised total rather than guessed from the page length.
+    """
     payload = await _get("/anime", {**params, "include": "categories"})
     resources = _attach_categories(payload.get("data") or [], payload)
-    return await _attach_mappings(resources)
+    items = await _attach_mappings(resources)
+
+    total = _meta_count(payload)
+    offset = int(params.get("page[offset]") or 0)
+    limit = int(params.get("page[limit]") or MAX_PER_PAGE)
+
+    if total is None:
+        has_more = len(items) >= limit
+    else:
+        has_more = offset + len(items) < total
+
+    return items, has_more, total
 
 
 async def mal_id_from_anilist(anilist_id: int) -> Optional[int]:
@@ -301,7 +339,7 @@ async def mal_id_from_anilist(anilist_id: int) -> Optional[int]:
 
 async def get_trending(page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
     limit = min(per_page, MAX_PER_PAGE)
-    return await _collection(
+    items, _, _ = await _collection(
         {
             "page[limit]": limit,
             "page[offset]": max(0, (page - 1) * limit),
@@ -309,17 +347,19 @@ async def get_trending(page: int = 1, per_page: int = 20) -> List[Dict[str, Any]
             "sort": "-userCount",
         }
     )
+    return items
 
 
 async def get_popular(page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
     limit = min(per_page, MAX_PER_PAGE)
-    return await _collection(
+    items, _, _ = await _collection(
         {
             "page[limit]": min(per_page, MAX_PER_PAGE),
             "page[offset]": max(0, (page - 1) * min(per_page, MAX_PER_PAGE)),
             "sort": "-userCount",
         }
     )
+    return items
 
 
 async def get_seasonal(
@@ -338,12 +378,13 @@ async def get_seasonal(
         params["filter[seasonYear]"] = str(year)
     if season and _text(season):
         params["filter[season]"] = _text(season).lower()
-    return await _collection(params)
+    items, _, _ = await _collection(params)
+    return items
 
 
 async def get_upcoming(page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
     limit = min(per_page, MAX_PER_PAGE)
-    return await _collection(
+    items, _, _ = await _collection(
         {
             "page[limit]": limit,
             "page[offset]": max(0, (page - 1) * limit),
@@ -351,6 +392,7 @@ async def get_upcoming(page: int = 1, per_page: int = 20) -> List[Dict[str, Any]
             "sort": "-userCount",
         }
     )
+    return items
 
 
 async def get_recent_releases(page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
@@ -471,7 +513,59 @@ async def search_anime_anilist(
     sort_key = (sort or ["POPULARITY_DESC"])[0] if sort else "POPULARITY_DESC"
     params["sort"] = "-averageRating" if sort_key == "SCORE_DESC" else "-userCount"
 
-    return await _collection(params)
+    items, has_more, _ = await _collection(params)
+    return items
+
+
+async def search_page(
+    search: Optional[str] = None,
+    genre: Optional[str] = None,
+    format: Optional[str] = None,
+    sort: Optional[List[str]] = None,
+    season: Optional[str] = None,
+    year: Optional[int] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """Search returning ``(items, has_more)`` for callers that paginate.
+
+    Relevance searches cannot be walked past the first block on Kitsu: asking
+    for the next offset returns the same block again, so a caller that trusts
+    the page length would offer a "load more" that yields nothing.  Report
+    ``has_more`` from the advertised total instead.
+    """
+    limit = min(per_page, MAX_PER_PAGE)
+    params: Dict[str, Any] = {
+        "page[limit]": limit,
+        "page[offset]": max(0, (page - 1) * limit),
+    }
+    if search and search.strip():
+        params["filter[text]"] = search.strip()
+    if status and status.strip().upper() in _STATUS_FILTERS:
+        params["filter[status]"] = _STATUS_FILTERS[status.strip().upper()]
+    if year:
+        params["filter[seasonYear]"] = str(year)
+    subtype = (format or "").strip().lower()
+    if subtype in _FORMAT_MAP:
+        params["filter[subtype]"] = subtype
+
+    sort_key = (sort or ["POPULARITY_DESC"])[0] if sort else "POPULARITY_DESC"
+    params["sort"] = "-averageRating" if sort_key == "SCORE_DESC" else "-userCount"
+
+    # Kitsu quantises ``page[offset]`` whenever a filter is present: the second
+    # offset returns the first block again and only the third advances, so a
+    # filtered search cannot be walked reliably. Serve the first block and
+    # declare it final rather than offering a next page that repeats rows.
+    filtered = _is_filtered(params)
+    if filtered and page > 1:
+        return [], False
+
+    items, has_more, total = await _collection(params)
+
+    if filtered:
+        return items, False
+    return items, has_more
 
 
 async def get_anime_details(anilist_id: int) -> Optional[Dict[str, Any]]:

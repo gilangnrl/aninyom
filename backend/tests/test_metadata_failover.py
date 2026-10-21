@@ -212,6 +212,88 @@ class RecentFeedHonestyTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(rows[0]["airing_at"], 0)
 
 
+class SearchPaginationTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests: search paging must never repeat a page.
+
+    Kitsu quantises ``page[offset]`` whenever a filter is present, so the
+    second offset returns the first block again. The UI appended nothing while
+    still offering "load more" -- the button looked dead.
+    """
+
+    def _params(self, **extra):
+        base = {"page[limit]": 20, "page[offset]": 0, "sort": "-userCount"}
+        base.update(extra)
+        return base
+
+    def test_is_filtered_detects_filter_params(self):
+        self.assertFalse(kitsu._is_filtered(self._params()))
+        self.assertTrue(kitsu._is_filtered(self._params(**{"filter[text]": "naruto"})))
+        self.assertTrue(kitsu._is_filtered(self._params(**{"filter[subtype]": "tv"})))
+        self.assertTrue(kitsu._is_filtered(self._params(**{"filter[status]": "current"})))
+
+    async def test_filtered_page_two_returns_empty(self):
+        """Page 2 of a filtered search must be empty, not a duplicate."""
+        calls = []
+
+        async def fake_get(path, params=None):
+            calls.append(params)
+            return {
+                "data": [{"id": "1", "attributes": {"titles": {}}}],
+                "included": [],
+                "meta": {"count": 500},
+            }
+
+        async def fake_attach(resources):
+            return [kitsu._normalize(r) for r in resources]
+
+        with mock.patch.object(kitsu, "_get", fake_get), mock.patch.object(
+            kitsu, "_attach_mappings", fake_attach
+        ):
+            items, has_more = await kitsu.search_page(search="naruto", page=2, per_page=20)
+
+        self.assertEqual(items, [])
+        self.assertFalse(has_more)
+        self.assertEqual(calls, [], "page 2 of a filtered search should not hit upstream")
+
+    async def test_filtered_page_one_reports_no_more(self):
+        async def fake_get(path, params=None):
+            return {
+                "data": [{"id": "1", "attributes": {"titles": {}}}],
+                "included": [],
+                "meta": {"count": 500},
+            }
+
+        async def fake_attach(resources):
+            return [kitsu._normalize(r) for r in resources]
+
+        with mock.patch.object(kitsu, "_get", fake_get), mock.patch.object(
+            kitsu, "_attach_mappings", fake_attach
+        ):
+            items, has_more = await kitsu.search_page(search="naruto", page=1, per_page=20)
+
+        self.assertEqual(len(items), 1)
+        self.assertFalse(has_more, "filtered paging is unreliable: must not offer page 2")
+
+    async def test_unfiltered_browse_uses_advertised_total(self):
+        async def fake_get(path, params=None):
+            return {
+                "data": [{"id": str(i), "attributes": {"titles": {}}} for i in range(20)],
+                "included": [],
+                "meta": {"count": 22515},
+            }
+
+        async def fake_attach(resources):
+            return [kitsu._normalize(r) for r in resources]
+
+        with mock.patch.object(kitsu, "_get", fake_get), mock.patch.object(
+            kitsu, "_attach_mappings", fake_attach
+        ):
+            items, has_more = await kitsu.search_page(page=1, per_page=20)
+
+        self.assertEqual(len(items), 20)
+        self.assertTrue(has_more)
+
+
 class _EmptyProvider:
     def __getattr__(self, name):
         async def _call(**kwargs):
