@@ -7,48 +7,54 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ..cache import cache
 from ..database import db
-from ..providers import anilist
+from ..providers import metadata
 from ..scrapers import hianime
 
 logger = logging.getLogger("aninyom.api.anime")
 router = APIRouter(prefix="/api/anime", tags=["Anime"])
 
 
+def _unavailable(action: str) -> HTTPException:
+    """Failover exhausted and nothing cached: report 503, not a server bug."""
+    logger.error("Metadata unavailable for %s: every provider failed", action)
+    return HTTPException(
+        status_code=503,
+        detail=(
+            "Anime metadata is temporarily unavailable because all upstream "
+            "providers are down. Please try again in a few minutes."
+        ),
+    )
+
+
 @router.get("/trending")
+
+
 async def get_trending(page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=50)):
     """Get currently trending anime."""
-    cache_key = f"anilist:trending:{page}:{per_page}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
     try:
-        data = await anilist.get_trending(page=page, per_page=per_page)
-        await cache.set(cache_key, data, ttl=1800)
+        data = await metadata.get_trending(page=page, per_page=per_page)
         return data
     except Exception as e:
         logger.error("Failed fetching trending: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to fetch trending anime")
+        raise _unavailable("trending") from e
 
 
 @router.get("/popular")
+
+
 async def get_popular(page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=50)):
     """Get all-time popular anime."""
-    cache_key = f"anilist:popular:{page}:{per_page}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
     try:
-        data = await anilist.get_popular(page=page, per_page=per_page)
-        await cache.set(cache_key, data, ttl=3600)
+        data = await metadata.get_popular(page=page, per_page=per_page)
         return data
     except Exception as e:
         logger.error("Failed fetching popular: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to fetch popular anime")
+        raise _unavailable("popular") from e
 
 
 @router.get("/seasonal")
+
+
 async def get_seasonal(
     season: Optional[str] = Query(None, description="WINTER, SPRING, SUMMER, FALL"),
     year: Optional[int] = Query(None, description="Year, e.g. 2026"),
@@ -57,65 +63,53 @@ async def get_seasonal(
 ):
     """Get seasonal anime."""
     if not season or not year:
-        cur_season, cur_year = anilist.get_current_season_year()
+        cur_season, cur_year = metadata.get_current_season_year()
         season = season or cur_season
         year = year or cur_year
 
-    cache_key = f"anilist:seasonal:{season}:{year}:{page}:{per_page}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
     try:
-        data = await anilist.get_seasonal(season=season, year=year, page=page, per_page=per_page)
-        await cache.set(cache_key, data, ttl=7200)
+        data = await metadata.get_seasonal(season=season, year=year, page=page, per_page=per_page)
         return data
     except Exception as e:
         logger.error("Failed fetching seasonal: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to fetch seasonal anime")
+        raise _unavailable("seasonal") from e
 
 
 @router.get("/recent")
+
+
 async def get_recent_releases(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=50),
 ):
     """Get recently broadcast anime episodes."""
-    cache_key = f"anilist:recent:{page}:{per_page}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
     try:
-        data = await anilist.get_recent_releases(page=page, per_page=per_page)
-        await cache.set(cache_key, data, ttl=600)
+        data = await metadata.get_recent_releases(page=page, per_page=per_page)
         return data
     except Exception as e:
         logger.error("Failed fetching recent releases: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to fetch recent releases")
+        raise _unavailable("recent releases") from e
 
 
 @router.get("/upcoming")
+
+
 async def get_upcoming(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=50),
 ):
     """Get real upcoming anime seasons and premieres from AniList."""
-    cache_key = f"anilist:upcoming:{page}:{per_page}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
     try:
-        data = await anilist.get_upcoming(page=page, per_page=per_page)
-        await cache.set(cache_key, data, ttl=7200)
+        data = await metadata.get_upcoming(page=page, per_page=per_page)
         return data
     except Exception as e:
         logger.error("Failed fetching upcoming: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to fetch upcoming anime")
+        raise _unavailable("upcoming anime") from e
 
 
 @router.get("/search")
+
+
 async def search_anime(
     q: Optional[str] = Query(None, description="Search query"),
     genre: Optional[str] = Query(None, description="Genre filter"),
@@ -156,13 +150,8 @@ async def search_anime(
         else:
             sort_list = [sort.strip().upper()]
 
-    cache_key = f"anilist:search:{q}:{genre}:{format}:{sort}:{season}:{year}:{target_status}:{page}:{per_page}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
     try:
-        results = await anilist.search_anime_anilist(
+        results = await metadata.search_anime(
             search=q,
             genre=genre,
             format=format,
@@ -173,39 +162,40 @@ async def search_anime(
             page=page,
             per_page=per_page,
         )
-        await cache.set(cache_key, results, ttl=600)
         return results
     except Exception as e:
         logger.error("Search failed: %s", e)
-        raise HTTPException(status_code=500, detail="Search failed")
+        raise _unavailable("search") from e
 
 
 @router.get("/{anilist_id}")
+
+
 async def get_anime_details(anilist_id: int):
     """Get detailed anime information by AniList ID."""
-    cache_key = f"anilist:details:{anilist_id}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
     try:
-        media = await anilist.get_anime_details(anilist_id)
+        media = await metadata.get_anime_details(anilist_id)
         if not media:
+            # ``None`` means every provider failed or had no such id.  Report an
+            # outage as such instead of claiming the anime does not exist.
+            if not metadata.any_provider_healthy():
+                raise _unavailable("anime details")
             raise HTTPException(status_code=404, detail="Anime not found")
-        await cache.set(cache_key, media, ttl=86400)
         return media
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Failed fetching anime details %s: %s", anilist_id, e)
-        raise HTTPException(status_code=500, detail="Failed to fetch anime details")
+        raise _unavailable("anime details") from e
 
 
 @router.get("/{anilist_id}/episodes")
+
+
 async def get_anime_episodes(anilist_id: int, title: Optional[str] = Query(None)):
     """Fetch episode list for an anime, mapping AniList title to HiAnime."""
     # 1. Fetch details to get all possible title candidates
-    details = await anilist.get_anime_details(anilist_id)
+    details = await metadata.get_anime_details(anilist_id)
     candidates = []
     if title:
         candidates.append(title.strip())
@@ -278,7 +268,6 @@ async def get_anime_episodes(anilist_id: int, title: Optional[str] = Query(None)
             "title": target["title"],
             "episodes": episodes,
         }
-        await cache.set(cache_key, episodes_payload, ttl=1800)
         return episodes_payload
     except Exception as e:
         logger.error("Failed fetching episodes for anilist_id %s: %s", anilist_id, e)

@@ -98,6 +98,22 @@ class CacheManager:
                 return
         self._memory_cache.set(key, value, ttl)
 
+    async def set_with_stale(self, key: str, value: Any, ttl: int, stale_ttl: int) -> None:
+        """Store ``value`` under ``key`` and mirror it to a long-lived copy.
+
+        The mirror (``stale:<key>``) outlives the normal TTL so an upstream
+        outage can still be served from the last known good payload.
+        """
+        await self.set(key, value, ttl=ttl)
+        if stale_ttl > ttl:
+            await self.set(f"stale:{key}", value, ttl=stale_ttl)
+
+    async def get_stale(self, key: str, max_age: int = 0) -> Optional[Any]:
+        """Return the last known good payload for ``key``, if still retained."""
+        if max_age <= 0:
+            return None
+        return await self.get(f"stale:{key}")
+
     async def delete(self, key: str) -> None:
         if self.is_redis_connected and self.redis_client:
             try:

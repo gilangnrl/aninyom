@@ -23,6 +23,24 @@ HOST = os.getenv("HOST", "0.0.0.0")
 
 HI_ANIME_BASE = os.getenv("HI_ANIME_BASE", "https://hianime.at")
 ANILIST_GRAPHQL_URL = os.getenv("ANILIST_GRAPHQL_URL", "https://graphql.anilist.co")
+
+# Metadata failover chain. AniList is primary; when it is disabled or
+# Cloudflare-blocked the app degrades to Jikan (MAL) and then Kitsu.
+JIKAN_BASE = os.getenv("JIKAN_BASE", "https://api.jikan.moe/v4").rstrip("/")
+KITSU_BASE = os.getenv("KITSU_BASE", "https://kitsu.app/api/edge").rstrip("/")
+# Comma-separated failover order, e.g. "anilist,jikan,kitsu".
+METADATA_PROVIDERS = [
+    name.strip().lower()
+    for name in os.getenv("METADATA_PROVIDERS", "anilist,jikan,kitsu").split(",")
+    if name.strip()
+]
+# How long a cached entry may be served after its TTL expires while every
+# upstream is failing. 0 disables stale-while-error.
+METADATA_STALE_TTL = int(os.getenv("METADATA_STALE_TTL", "604800"))
+METADATA_UA = os.getenv(
+    "METADATA_UA",
+    "Aninyom/1.0 (+https://github.com/aninyom; anime metadata aggregator)",
+)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 CORS_ORIGINS = [

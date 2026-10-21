@@ -198,7 +198,8 @@ query ($id: Int) {
 
 
 async def _post_graphql(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    timeout = httpx.Timeout(10.0, connect=4.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
             ANILIST_GRAPHQL_URL,
             json={"query": query, "variables": variables},
