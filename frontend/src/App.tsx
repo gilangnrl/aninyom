@@ -39,6 +39,9 @@ function localDateKey(date: Date): string {
 }
 
 function formatAiredTime(timestamp: number): string {
+  // 0 means the provider could not supply a broadcast time (a real value for
+  // some upstreams). Never render that as a date -- it would read as epoch.
+  if (!timestamp || timestamp <= 0) return "Recently added";
   const diffSec = Math.floor(Date.now() / 1000) - timestamp;
   if (diffSec < 0) return "Airing soon";
   const hours = Math.floor(diffSec / 3600);

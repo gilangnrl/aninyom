@@ -68,6 +68,7 @@ _SEASON_MAP = {"WINTER": "winter", "SPRING": "spring", "SUMMER": "summer", "FALL
 
 _DURATION_RE = re.compile(r"(\d+)\s*min", re.IGNORECASE)
 _HOURS_RE = re.compile(r"(\d+)\s*hr", re.IGNORECASE)
+_EPISODE_URL_RE = re.compile(r"/episode/(?P<number>\d+)")
 
 # Connect budget in seconds.  Unreachable hosts fail here rather than hanging.
 _CONNECT_TIMEOUT = 4.0
@@ -171,6 +172,22 @@ def _names(items: Any) -> List[str]:
         )
         if name
     ]
+
+
+def _episode_number(episode: Dict[str, Any]) -> Optional[int]:
+    """Extract the episode number from a ``/watch/episodes`` entry.
+
+    Jikan exposes no numeric field, only a MAL URL ending in
+    ``/anime/<mal_id>/episode/<n>``.
+    """
+    number = _to_int(episode.get("episode_number"))
+    if number is not None:
+        return number
+
+    match = _EPISODE_URL_RE.search(_text(episode.get("url")))
+    if match:
+        return _to_int(match.group("number"))
+    return _to_int(episode.get("title"))
 
 
 def _normalize(entry: Dict[str, Any], anilist_id: Optional[int] = None) -> Dict[str, Any]:
@@ -300,23 +317,40 @@ async def get_upcoming(page: int = 1, per_page: int = 20) -> List[Dict[str, Any]
 async def get_recent_releases(page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
     """Recent episodes from ``/watch/episodes``.
 
-    Jikan returns the parent entry plus up to two recent episodes, but no
-    broadcast timestamp, so ``airing_at`` is 0 and ``episode`` is unknown.
+    Each entry is the parent anime plus up to two recently added episodes.
+    Jikan supplies no broadcast timestamp, so ``airing_at`` is ``0`` to mean
+    "unknown" (callers must not render it as a date), and the episode number is
+    parsed from the episode URL because there is no numeric field.
     """
     payload = await _get("/watch/episodes", {"page": page})
     results: List[Dict[str, Any]] = []
+
     for item in payload.get("data") or []:
         entry = item.get("entry") or {}
-        normalized = _normalize(entry)
         episodes = item.get("episodes") or []
+        if not episodes:
+            continue
+
+        number = None
+        for episode in episodes:
+            number = _episode_number(episode)
+            if number is not None:
+                break
+        if number is None:
+            continue
+
         results.append(
             {
-                "airing_id": _to_int(entry.get("mal_id")) or 0,
+                "airing_id": _to_int(episodes[0].get("mal_id")) or 0,
                 "airing_at": 0,
-                "episode": len(episodes),
-                "media": normalized,
+                "episode": number,
+                "media": _normalize(entry),
             }
         )
+
+        if len(results) >= min(per_page, MAX_PER_PAGE):
+            break
+
     return results
 
 

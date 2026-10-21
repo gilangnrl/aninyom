@@ -10,6 +10,7 @@ All public functions return the normalized dict shape produced by
 """
 
 import asyncio
+import datetime
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -23,6 +24,14 @@ logger = logging.getLogger("aninyom.providers.kitsu")
 MAX_PER_PAGE = 20
 # Per-item mapping lookups run in parallel; keep the burst small and polite.
 _MAPPING_CONCURRENCY = 8
+
+# Kitsu resource id -> normalized anime, so the episode feed does not repeat
+# expensive mapping lookups for shows it has already resolved.
+_resolved_cache: Dict[str, Dict[str, Any]] = {}
+_RESOLVED_CACHE_MAX = 512
+
+# How many episode pages to walk when assembling the recent-releases feed.
+_RECENT_PAGE_WALK = 4
 
 _HEADERS = {
     "Accept": "application/vnd.api+json",
@@ -99,6 +108,22 @@ def _season_from_month(month: Optional[int]) -> str:
     if month in (7, 8, 9):
         return "SUMMER"
     return "FALL"
+
+
+def _airdate_epoch(value: Any) -> int:
+    """Convert Kitsu's ``YYYY-MM-DD`` airdate to a Unix timestamp (UTC).
+
+    Returns 0 when the value is not a usable date so callers can drop the row
+    rather than display epoch time as if it were real.
+    """
+    raw = _text(value)
+    if not raw:
+        return 0
+    try:
+        parsed = datetime.datetime.strptime(raw[:10], "%Y-%m-%d")
+    except ValueError:
+        return 0
+    return int(parsed.replace(tzinfo=datetime.timezone.utc).timestamp())
 
 
 def _date_parts(value: Any) -> Optional[Dict[str, int]]:
@@ -329,22 +354,92 @@ async def get_upcoming(page: int = 1, per_page: int = 20) -> List[Dict[str, Any]
 
 
 async def get_recent_releases(page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
-    """Approximate recent releases with currently-airing titles.
+    """Recent episodes built from real Kitsu episode records.
 
-    Kitsu exposes no public episode-schedule endpoint equivalent to AniList's
-    ``airingSchedules``, so ongoing shows stand in.  ``airing_at`` is 0 because
-    Kitsu provides no broadcast timestamp.
+    Kitsu has no airing-schedule endpoint, but its ``episodes`` resource carries
+    a real ``airdate`` and episode ``number`` plus the parent anime, so a
+    genuine feed can be assembled from it.
+
+    ``sort=-updatedAt`` is dominated by bulk-added episodes from a handful of
+    shows, so several pages are walked to collect distinct titles.
+
+    Entries whose ``airdate`` is unknown are dropped: the UI renders a relative
+    time label, so a missing date would otherwise display as epoch and present
+    fabricated recency as fact.  Returning fewer (or zero) real entries is
+    correct; inventing rows is not.
     """
-    results = await get_trending(page=page, per_page=per_page)
-    return [
-        {
-            "airing_id": item.get("anilist_id") or index,
-            "airing_at": 0,
-            "episode": 0,
-            "media": item,
-        }
-        for index, item in enumerate(results)
-    ]
+    wanted = min(per_page, MAX_PER_PAGE)
+    seen_media: set = set()
+    collected: List[Dict[str, Any]] = []
+
+    # Fetch the pages concurrently: walking them serially cost ~6s.
+    base = (page - 1) * _RECENT_PAGE_WALK
+    offsets = [(base + index) * MAX_PER_PAGE for index in range(_RECENT_PAGE_WALK)]
+
+    async def fetch(offset: int) -> Dict[str, Any]:
+        try:
+            return await _get(
+                "/episodes",
+                {
+                    "page[limit]": MAX_PER_PAGE,
+                    "page[offset]": offset,
+                    "sort": "-updatedAt",
+                    "include": "media",
+                },
+            )
+        except Exception as exc:  # pragma: no cover - partial page is fine
+            logger.debug("Kitsu episode page %s failed: %s", offset, exc)
+            return {}
+
+    payloads = await asyncio.gather(*(fetch(offset) for offset in offsets))
+
+    media_seen: Dict[str, Dict[str, Any]] = {}
+    for payload in payloads:
+        for item in payload.get("included") or []:
+            if item.get("type") == "anime":
+                media_seen.setdefault(_text(item.get("id")), item)
+
+    # Resolve mappings for all new anime in one parallel batch.
+    fresh = [resource for key, resource in media_seen.items() if key not in _resolved_cache]
+    if fresh:
+        normalized = await _attach_mappings(fresh)
+        for resource, entry in zip(fresh, normalized):
+            if len(_resolved_cache) >= _RESOLVED_CACHE_MAX:
+                _resolved_cache.clear()
+            _resolved_cache[_text(resource.get("id"))] = entry
+
+    for payload in payloads:
+        for episode in payload.get("data") or []:
+            attrs = episode.get("attributes") or {}
+            airdate = _text(attrs.get("airdate"))
+            number = _to_int(attrs.get("number"))
+            if not airdate or number is None:
+                continue
+
+            media_id = _text(
+                ((episode.get("relationships") or {}).get("media", {}).get("data") or {}).get("id")
+            )
+            media = _resolved_cache.get(media_id)
+            if not media:
+                continue
+
+            key = media.get("anilist_id") or media_id
+            if key in seen_media:
+                continue
+            seen_media.add(key)
+
+            collected.append(
+                {
+                    "airing_id": _to_int(episode.get("id")) or 0,
+                    "airing_at": _airdate_epoch(airdate),
+                    "episode": number,
+                    "media": media,
+                }
+            )
+
+    # Newest first, then cap to the requested page size.
+    collected.sort(key=lambda row: row["airing_at"], reverse=True)
+    return collected[:wanted]
 
 
 async def search_anime_anilist(

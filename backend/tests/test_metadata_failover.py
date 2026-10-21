@@ -138,6 +138,80 @@ class FailoverChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0]["title_english"], "ok")
 
 
+class RecentReleaseTests(unittest.TestCase):
+    """Regression tests: /recent must never fabricate data.
+
+    The first implementation returned *trending* titles dressed up as recent
+    releases, with ``airing_at=0`` and ``episode=0``. The UI rendered a bold
+    "EP 0" badge and an epoch-derived "20000d ago" label, presenting invented
+    recency as fact.
+    """
+
+    def test_airdate_epoch_parses_real_dates(self):
+        epoch = kitsu._airdate_epoch("2026-10-20")
+        self.assertEqual(epoch, 1792454400)
+
+    def test_airdate_epoch_returns_zero_for_unknown(self):
+        """0 is the sentinel the UI treats as "unknown", not as epoch."""
+        self.assertEqual(kitsu._airdate_epoch(None), 0)
+        self.assertEqual(kitsu._airdate_epoch(""), 0)
+        self.assertEqual(kitsu._airdate_epoch("not-a-date"), 0)
+
+    def test_jikan_episode_number_parsed_from_url(self):
+        episode = {"url": "https://myanimelist.net/anime/52991/episode/12"}
+        self.assertEqual(jikan._episode_number(episode), 12)
+
+    def test_jikan_episode_number_unknown_returns_none(self):
+        self.assertIsNone(jikan._episode_number({"url": "https://example.test/x"}))
+
+
+class RecentFeedHonestyTests(unittest.IsolatedAsyncioTestCase):
+    """Entries without a usable air date or episode must be dropped."""
+
+    async def test_kitsu_recent_drops_undated_and_unnumbered_episodes(self):
+        payload = {
+            "data": [
+                {
+                    "id": "1",
+                    "attributes": {"airdate": "2026-10-20", "number": 5},
+                    "relationships": {"media": {"data": {"id": "m1"}}},
+                },
+                # No airdate -> must be dropped (would render as epoch).
+                {
+                    "id": "2",
+                    "attributes": {"airdate": None, "number": 6},
+                    "relationships": {"media": {"data": {"id": "m1"}}},
+                },
+                # No number -> must be dropped (would render as "EP 0").
+                {
+                    "id": "3",
+                    "attributes": {"airdate": "2026-10-21", "number": None},
+                    "relationships": {"media": {"data": {"id": "m2"}}},
+                },
+            ],
+            "included": [
+                {"id": "m1", "type": "anime", "attributes": {"titles": {"en": "Show One"}}},
+                {"id": "m2", "type": "anime", "attributes": {"titles": {"en": "Show Two"}}},
+            ],
+        }
+
+        async def fake_get(path, params=None):
+            return payload
+
+        async def fake_attach(resources):
+            return [kitsu._normalize(r) for r in resources]
+
+        kitsu._resolved_cache.clear()
+        with mock.patch.object(kitsu, "_get", fake_get), mock.patch.object(
+            kitsu, "_attach_mappings", fake_attach
+        ):
+            rows = await kitsu.get_recent_releases(per_page=8)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["episode"], 5)
+        self.assertGreater(rows[0]["airing_at"], 0)
+
+
 class _EmptyProvider:
     def __getattr__(self, name):
         async def _call(**kwargs):
