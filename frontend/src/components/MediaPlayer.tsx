@@ -210,7 +210,6 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
 
   // HUD & controls
   const [showControls, setShowControls] = useState(true);
-  const controlsTimeoutRef = useRef<number | null>(null);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showSubMenu, setShowSubMenu] = useState(false);
   const [ambientGlow, setAmbientGlow] = useState(true);
@@ -526,13 +525,57 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({
     };
   }, [ambientGlow]);
 
-  // Handle Controls Visibility Timeout
+  // Controls auto-hide.
+  //
+  // The previous implementation only scheduled the hide from ``mousemove``, so
+  // if playback started without the pointer moving the timer was never armed
+  // and the header/footer stayed on screen indefinitely.  The timer is now
+  // armed whenever playback starts or the pointer interacts, and is cleared
+  // whenever something needs the controls to stay put (pause, open menu,
+  // reduced motion).
+  const CONTROLS_IDLE_MS = 3000;
+  const controlsTimeoutRef = useRef<number | null>(null);
+  const anyMenuOpen = showSettingsMenu || showSubMenu || showEpisodesDrawer;
+  const prefersReducedMotion =
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const clearControlsTimer = useCallback(() => {
+    if (controlsTimeoutRef.current !== null) {
+      window.clearTimeout(controlsTimeoutRef.current);
+      controlsTimeoutRef.current = null;
+    }
+  }, []);
+
+  const armControlsTimer = useCallback(() => {
+    clearControlsTimer();
+    // Keep the chrome pinned while paused, while a menu is open, or when the
+    // user asked for reduced motion.
+    if (!playing || anyMenuOpen || prefersReducedMotion) return;
+    controlsTimeoutRef.current = window.setTimeout(() => {
+      controlsTimeoutRef.current = null;
+      setShowControls(false);
+    }, CONTROLS_IDLE_MS);
+  }, [playing, anyMenuOpen, prefersReducedMotion, clearControlsTimer]);
+
+  // Re-arm whenever playback state changes (play -> start countdown,
+  // pause -> pin the controls) or a menu opens/closes.
+  useEffect(() => {
+    if (!playing) {
+      setShowControls(true);
+      clearControlsTimer();
+      return;
+    }
+    armControlsTimer();
+    return clearControlsTimer;
+  }, [playing, anyMenuOpen, armControlsTimer, clearControlsTimer]);
+
+  // Never leave a pending timer behind when the player unmounts.
+  useEffect(() => clearControlsTimer, [clearControlsTimer]);
+
   const handleMouseMove = () => {
     setShowControls(true);
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    controlsTimeoutRef.current = window.setTimeout(() => {
-      if (playing) setShowControls(false);
-    }, 3500);
+    armControlsTimer();
   };
 
   // Next / Previous episode handlers
